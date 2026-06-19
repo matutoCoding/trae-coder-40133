@@ -37,6 +37,7 @@ export interface Booking {
   totalAmount: number;
   status: BookingStatus;
   createdAt: string;
+  cancelledAt?: string;
 }
 
 export interface BillingSegment {
@@ -62,6 +63,20 @@ export interface DoublesShare {
   isLeader: boolean;
 }
 
+export type PaymentStatus = 'pending' | 'paid' | 'refunded';
+
+export type RefundReason = 'user_cancel' | 'system_cancel' | 'other';
+
+export interface RefundRecord {
+  id: string;
+  billId: string;
+  bookingId: string;
+  amount: number;
+  reason: RefundReason;
+  note?: string;
+  createdAt: string;
+}
+
 export interface Bill {
   id: string;
   bookingId: string;
@@ -69,10 +84,20 @@ export interface Bill {
   totalAmount: number;
   segments: BillingSegment[];
   shares?: DoublesShare[];
+  paymentStatus: PaymentStatus;
+  paidAt?: string;
+  refundAmount?: number;
+  refunds?: RefundRecord[];
   createdAt: string;
 }
 
 export interface ConflictResult {
   hasConflict: boolean;
   conflictingBookings: Booking[];
+}
+
+export interface RateGap {
+  startTime: string;
+  endTime: string;
+  durationMinutes: number;
 }

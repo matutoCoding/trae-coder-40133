@@ -1,9 +1,19 @@
 import { create } from 'zustand';
-import type { Bill, Booking, Court, Rate } from '@/types';
+import type { Bill, Booking, Court, PaymentStatus, Rate, RefundRecord, RefundReason } from '@/types';
 import { loadData, saveData, genId, genBillNo } from '@/utils/storage';
 import { todayStr, addDays } from '@/utils/time';
 import { calculateBilling, splitDoublesShare } from '@/utils/billing';
 import { checkBookingConflict } from '@/utils/conflict';
+import { hasRateGapInRange, formatRateGapList } from '@/utils/rateGap';
+
+function normalizeBill(b: any): Bill {
+  return {
+    ...b,
+    paymentStatus: (b.paymentStatus ?? 'pending') as PaymentStatus,
+    refunds: b.refunds ?? [],
+    refundAmount: b.refundAmount ?? 0,
+  } as Bill;
+}
 
 interface AppState {
   courts: Court[];
@@ -31,7 +41,9 @@ interface AppState {
     teammates: string[];
   }) => { ok: boolean; error?: string; booking?: Booking };
 
-  cancelBooking: (id: string) => void;
+  cancelBooking: (id: string, reason?: RefundReason, note?: string) => { ok: boolean; error?: string };
+
+  markBillPaid: (billId: string) => void;
 
   checkConflict: (
     courtId: string,
@@ -40,6 +52,8 @@ interface AppState {
     endTime: string,
     excludeBookingId?: string
   ) => { hasConflict: boolean; conflictingBookings: Booking[] };
+
+  checkRateGap: (startTime: string, endTime: string) => { hasGap: boolean; gaps: any[]; message?: string };
 
   calcBilling: (startTime: string, endTime: string) => ReturnType<typeof calculateBilling>;
 }
@@ -91,6 +105,9 @@ function makeDefaultBills(bookings: Booking[], rates: Rate[]): Bill[] {
       totalAmount: billing.totalAmount,
       segments: billing.segments,
       shares,
+      paymentStatus: 'pending',
+      refunds: [],
+      refundAmount: 0,
       createdAt: b.createdAt,
     };
   });
@@ -108,7 +125,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const courts = loadData<Court[]>('courts', []);
     const rates = loadData<Rate[]>('rates', []);
     const bookings = loadData<Booking[]>('bookings', []);
-    const bills = loadData<Bill[]>('bills', []);
+    const rawBills = loadData<any[]>('bills', []);
+    const bills = rawBills.map(normalizeBill);
 
     if (courts.length === 0) {
       saveData('courts', DEFAULT_COURTS);
@@ -119,6 +137,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       saveData('bills', dBills);
       set({ courts: DEFAULT_COURTS, rates: DEFAULT_RATES, bookings: dBookings, bills: dBills, inited: true });
     } else {
+      saveData('bills', bills);
       set({ courts, rates, bookings, bills, inited: true });
     }
   },
@@ -158,6 +177,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     return checkBookingConflict(get().bookings, courtId, date, startTime, endTime, excludeBookingId);
   },
 
+  checkRateGap(startTime, endTime) {
+    const result = hasRateGapInRange(get().rates, startTime, endTime);
+    if (result.hasGap) {
+      return { ...result, message: `以下时段暂无费率：${formatRateGapList(result.gaps)}，请先到费率设置补齐后再预约` };
+    }
+    return result;
+  },
+
   calcBilling(startTime, endTime) {
     return calculateBilling(startTime, endTime, get().rates);
   },
@@ -169,7 +196,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       const names = conflict.conflictingBookings.map((b) => `${b.customerName}(${b.startTime}-${b.endTime})`).join('、');
       return { ok: false, error: `时段冲突，已被 ${names} 预订` };
     }
+    const gap = get().checkRateGap(startTime, endTime);
+    if (gap.hasGap) {
+      return { ok: false, error: gap.message };
+    }
     const billing = get().calcBilling(startTime, endTime);
+    if (billing.totalAmount <= 0 || billing.segments.length === 0) {
+      return { ok: false, error: '所选时段暂无对应费率，请先在「费率设置」补齐' };
+    }
     const booking: Booking = {
       id: genId('b_'),
       courtId, date, startTime, endTime,
@@ -191,6 +225,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       totalAmount: billing.totalAmount,
       segments: billing.segments,
       shares,
+      paymentStatus: 'pending',
+      refunds: [],
+      refundAmount: 0,
       createdAt: new Date().toISOString(),
     };
     const nextBills = [...get().bills, bill];
@@ -200,11 +237,54 @@ export const useAppStore = create<AppState>((set, get) => ({
     return { ok: true, booking };
   },
 
-  cancelBooking(id) {
+  cancelBooking(id, reason = 'user_cancel', note) {
+    const booking = get().bookings.find((b) => b.id === id);
+    if (!booking) return { ok: false, error: '预约不存在' };
+    if (booking.status !== 'active') return { ok: false, error: '预约已退订' };
+
+    const now = new Date().toISOString();
     const nextBookings = get().bookings.map((b) =>
-      b.id === id ? { ...b, status: 'cancelled' as const } : b
+      b.id === id ? { ...b, status: 'cancelled' as const, cancelledAt: now } : b
     );
     saveData('bookings', nextBookings);
-    set({ bookings: nextBookings });
+
+    const refundRecord: RefundRecord = {
+      id: genId('rf_'),
+      billId: '',
+      bookingId: id,
+      amount: booking.totalAmount,
+      reason,
+      note,
+      createdAt: now,
+    };
+
+    const nextBills = get().bills.map((b) => {
+      if (b.bookingId !== id) return b;
+      refundRecord.billId = b.id;
+      const newRefunds = [...(b.refunds ?? []), refundRecord];
+      return {
+        ...b,
+        paymentStatus: 'refunded' as PaymentStatus,
+        refunds: newRefunds,
+        refundAmount: newRefunds.reduce((s, r) => s + r.amount, 0),
+      };
+    });
+    saveData('bills', nextBills);
+
+    set({ bookings: nextBookings, bills: nextBills });
+    return { ok: true };
+  },
+
+  markBillPaid(billId) {
+    const nextBills = get().bills.map((b) => {
+      if (b.id !== billId) return b;
+      return {
+        ...b,
+        paymentStatus: 'paid' as PaymentStatus,
+        paidAt: new Date().toISOString(),
+      };
+    });
+    saveData('bills', nextBills);
+    set({ bills: nextBills });
   },
 }));

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, UserPlus, X, Users, User, CheckCircle2 } from 'lucide-react';
+import { AlertTriangle, UserPlus, X, Users, User, CheckCircle2, Link2 } from 'lucide-react';
 import Modal from './Modal';
 import { useAppStore } from '@/store';
 import type { BookingType, Court } from '@/types';
 import { generateTimeSlots } from '@/utils/time';
 import { splitDoublesShare, tierColorClass } from '@/utils/billing';
+import { findRateGaps, formatRateGapList } from '@/utils/rateGap';
+import { Link } from 'react-router-dom';
 
 interface Props {
   open: boolean;
@@ -21,6 +23,7 @@ export default function BookingModal({ open, onClose, court, date, initialStart,
   const courts = useAppStore((s) => s.courts);
   const rates = useAppStore((s) => s.rates);
   const checkConflict = useAppStore((s) => s.checkConflict);
+  const checkRateGap = useAppStore((s) => s.checkRateGap);
   const calcBilling = useAppStore((s) => s.calcBilling);
   const createBooking = useAppStore((s) => s.createBooking);
 
@@ -48,10 +51,18 @@ export default function BookingModal({ open, onClose, court, date, initialStart,
     }
   }, [open, court.id, initialStart, initialEnd]);
 
+  const globalGaps = useMemo(() => findRateGaps(rates), [rates]);
+
+  const rangeGap = useMemo(() => {
+    if (startTime >= endTime) return null;
+    return checkRateGap(startTime, endTime);
+  }, [startTime, endTime, checkRateGap]);
+
   const billing = useMemo(() => {
     if (startTime >= endTime) return null;
+    if (rangeGap?.hasGap) return null;
     return calcBilling(startTime, endTime);
-  }, [startTime, endTime, calcBilling]);
+  }, [startTime, endTime, calcBilling, rangeGap]);
 
   const conflict = useMemo(() => {
     if (!courtId || startTime >= endTime) return null;
@@ -99,6 +110,10 @@ export default function BookingModal({ open, onClose, court, date, initialStart,
       setError('所选时段与已有预约冲突');
       return;
     }
+    if (rangeGap?.hasGap) {
+      setError(rangeGap.message ?? '所选时段存在未配置费率的区间');
+      return;
+    }
     const res = createBooking({
       courtId,
       date,
@@ -112,22 +127,24 @@ export default function BookingModal({ open, onClose, court, date, initialStart,
       setError(res.error ?? '预约失败');
       return;
     }
-    setSuccess('预约成功！时段已锁定，账单已生成。');
+    setSuccess('预约成功！时段已锁定，账单已生成（默认待收款）。');
     setTimeout(() => {
       onClose();
-    }, 1200);
+    }, 1400);
   }
+
+  const canSubmit = !conflict?.hasConflict && !rangeGap?.hasGap && !!billing && billing.totalAmount > 0;
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title={`预约场地 · ${court.name}`}
+      title={`预约场地 · ${court.name} · ${date}`}
       size="lg"
       footer={
         <>
           <button onClick={onClose} className="btn-secondary">取消</button>
-          <button onClick={submit} className="btn-accent" disabled={!!conflict?.hasConflict || !billing}>
+          <button onClick={submit} className="btn-accent" disabled={!canSubmit}>
             确认预约 ¥{billing?.totalAmount.toFixed(2) ?? '0.00'}
           </button>
         </>
@@ -144,6 +161,26 @@ export default function BookingModal({ open, onClose, court, date, initialStart,
           <div className="flex items-start gap-2 p-3 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm">
             <CheckCircle2 size={16} className="mt-0.5 shrink-0" />
             <span>{success}</span>
+          </div>
+        )}
+
+        {globalGaps.length > 0 && (
+          <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs space-y-1.5">
+            <div className="flex items-start gap-2">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <div className="font-semibold">
+                  当前费率未覆盖全天，存在 {globalGaps.length} 处缺口：
+                  {formatRateGapList(globalGaps)}
+                </div>
+                <div className="mt-1 opacity-90">
+                  涉及这些区间的时段将无法下单，请先
+                  <Link to="/rates" className="underline font-semibold inline-flex items-center gap-1 mx-1 hover:text-amber-900">
+                    <Link2 size={11} /> 到费率设置补齐
+                  </Link>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -170,6 +207,30 @@ export default function BookingModal({ open, onClose, court, date, initialStart,
             </select>
           </div>
         </div>
+
+        {rangeGap?.hasGap && (
+          <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm flex items-start gap-2">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+            <div>
+              <div className="font-semibold">所选时段存在费率缺口，暂无法下单</div>
+              <div className="text-xs mt-1 opacity-90">
+                缺口时段：{formatRateGapList(rangeGap.gaps)}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {conflict?.hasConflict && (
+          <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm flex items-start gap-2">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+            <div>
+              <div className="font-semibold">时段冲突</div>
+              <div className="text-xs mt-1 opacity-90">
+                已被：{conflict.conflictingBookings.map((b) => `${b.customerName} ${b.startTime}-${b.endTime}`).join('、')}
+              </div>
+            </div>
+          </div>
+        )}
 
         <div>
           <label className="label-base">预约人姓名</label>
@@ -256,7 +317,7 @@ export default function BookingModal({ open, onClose, court, date, initialStart,
             <div className="space-y-1.5">
               {billing.segments.map((seg, idx) => (
                 <div key={idx} className="flex items-center justify-between text-sm py-1.5 px-2 rounded bg-white">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className={`tag border ${tierColorClass(seg.tier)}`}>{seg.tierName}</span>
                     <span className="text-gray-600">{seg.startTime} - {seg.endTime}</span>
                     <span className="text-gray-400 text-xs">({seg.durationMinutes}分 × ¥{seg.pricePerHour}/h)</span>
@@ -287,7 +348,7 @@ export default function BookingModal({ open, onClose, court, date, initialStart,
 
         {rates.length === 0 && (
           <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs">
-            提示：系统未配置费率，将无法计算费用。请到「费率设置」配置。
+            提示：系统未配置任何费率，无法下单。请到「费率设置」配置。
           </div>
         )}
       </div>
