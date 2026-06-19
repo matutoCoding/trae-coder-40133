@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Oswald:wght@500;600;700&display=swap');
+
+:root {
+  font-family: "Noto Sans SC", system-ui, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #f1f8e9;
+  color: #37474f;
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-lg bg-tennis-700 text-white font-medium
+           hover:bg-tennis-800 active:bg-tennis-900 transition-all shadow-tennis hover:shadow-tennis-hover
+           focus:outline-none focus:ring-2 focus:ring-tennis-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white text-tennis-800 font-medium border border-tennis-200
+           hover:bg-tennis-50 active:bg-tennis-100 transition-all shadow-sm
+           focus:outline-none focus:ring-2 focus:ring-tennis-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-lg bg-red-500 text-white font-medium
+           hover:bg-red-600 active:bg-red-700 transition-all shadow-sm
+           focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-accent {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-lg bg-ball-500 text-tennis-950 font-semibold
+           hover:bg-ball-600 active:bg-ball-700 transition-all shadow-tennis hover:shadow-tennis-hover
+           focus:outline-none focus:ring-2 focus:ring-ball-400 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .card {
+    @apply bg-white rounded-xl shadow-tennis border border-tennis-100 overflow-hidden;
+  }
+  .input-base {
+    @apply w-full px-3 py-2 rounded-lg border border-gray-300 bg-white text-gray-800 placeholder-gray-400
+           focus:outline-none focus:ring-2 focus:ring-tennis-500 focus:border-tennis-500 transition-all;
+  }
+  .label-base {
+    @apply block text-sm font-medium text-gray-700 mb-1;
+  }
+  .nav-item {
+    @apply flex items-center gap-3 px-4 py-3 rounded-lg text-tennis-100 font-medium
+           hover:bg-tennis-800/60 transition-all cursor-pointer;
+  }
+  .nav-item-active {
+    @apply bg-tennis-800 text-ball-400 shadow-inner;
+  }
+  .tag {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: #e8f5e9;
+  border-radius: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #a5d6a7;
+  border-radius: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: #81c784;
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up {
+  animation: fadeInUp 0.25s ease-out both;
+}
