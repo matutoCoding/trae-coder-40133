@@ -6,6 +6,7 @@ import Rates from "@/pages/Rates";
 import Bills from "@/pages/Bills";
 import Members from "@/pages/Members";
 import Dashboard from "@/pages/Dashboard";
+import Reconciliation from "@/pages/Reconciliation";
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
           <Route path="/courts" element={<Courts />} />
           <Route path="/rates" element={<Rates />} />
           <Route path="/bills" element={<Bills />} />
+          <Route path="/reconciliation" element={<Reconciliation />} />
           <Route path="*" element={<Schedule />} />
         </Route>
       </Routes>

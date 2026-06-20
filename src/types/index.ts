@@ -41,18 +41,21 @@ export interface Member {
   createdAt: string;
 }
 
-export type WalletTxType = 'recharge' | 'consume' | 'refund' | 'package_buy' | 'package_use' | 'package_refund';
+export type WalletTxType = 'recharge' | 'consume' | 'refund' | 'package_buy' | 'package_use' | 'package_refund' | 'cash_pay' | 'card_pay';
 
 export interface WalletTransaction {
   id: string;
-  memberId: string;
+  memberId?: string;
   type: WalletTxType;
   amount: number;
-  balanceAfter: number;
+  balanceAfter?: number;
   packageBalanceAfter?: number;
   billId?: string;
   bookingId?: string;
   packageId?: string;
+  payMethod?: 'cash' | 'card' | 'wallet' | 'package';
+  customerName?: string;
+  customerType?: 'member' | 'walkin';
   note?: string;
   createdAt: string;
 }
@@ -206,4 +209,31 @@ export interface DashboardSummary {
   avgUtilization: number;
   courts: CourtStats[];
   memberRanking: MemberRankingItem[];
+}
+
+export interface DailyReconciliationSummary {
+  date: string;
+  cashIncome: number;
+  cardIncome: number;
+  walletIncome: number;
+  packageIncome: number;
+  rechargeIncome: number;
+  packageBuyIncome: number;
+  refundAmount: number;
+  totalIncome: number;
+  netIncome: number;
+  txCount: number;
+  bookingCount: number;
+}
+
+export interface MemberDetailAnalytics {
+  memberId: string;
+  totalSpend: number;
+  totalRecharge: number;
+  bookingCount: number;
+  lastVisit: string | null;
+  favoriteCourtId: string | null;
+  favoriteCourtName: string | null;
+  monthlyTrend: { month: string; amount: number; count: number }[];
+  packageProgress: { packageName: string; total: number; used: number; remaining: number; pct: number }[];
 }

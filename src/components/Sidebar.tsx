@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { Calendar, MapPin, Receipt, Percent, Trophy, Users, BarChart3 } from 'lucide-react';
+import { Calendar, MapPin, Receipt, Percent, Trophy, Users, BarChart3, BookOpen } from 'lucide-react';
 
 const navItems = [
   { to: '/', label: '排期总览', icon: Calendar },
@@ -8,6 +8,7 @@ const navItems = [
   { to: '/courts', label: '场地管理', icon: MapPin },
   { to: '/rates', label: '费率设置', icon: Percent },
   { to: '/bills', label: '账单中心', icon: Receipt },
+  { to: '/reconciliation', label: '日结对账', icon: BookOpen },
 ];
 
 export default function Sidebar() {

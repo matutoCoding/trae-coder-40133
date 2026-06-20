@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import {
   Users, Plus, Edit2, Search, Wallet, Phone, Star,
   ChevronDown, ChevronUp, CreditCard, ArrowDownCircle, ArrowUpCircle, RotateCcw,
-  Calendar, Receipt, Ticket, Package, Sparkles,
+  Calendar, Receipt, Ticket, Package, Sparkles, TrendingUp, MapPin, Clock,
 } from 'lucide-react';
 import { useAppStore, getLevelMeta, MEMBER_LEVELS, PACKAGE_TEMPLATES } from '@/store';
 import PageHeader from '@/components/PageHeader';
@@ -354,6 +354,7 @@ export default function Members() {
   const listMemberTxs = useAppStore((s) => s.listMemberTxs);
   const listMemberPackages = useAppStore((s) => s.listMemberPackages);
   const getMemberTotalPackageRemaining = useAppStore((s) => s.getMemberTotalPackageRemaining);
+  const computeMemberAnalytics = useAppStore((s) => s.computeMemberAnalytics);
   const bookings = useAppStore((s) => s.bookings);
   const bills = useAppStore((s) => s.bills);
   const courts = useAppStore((s) => s.courts);
@@ -537,6 +538,72 @@ export default function Members() {
 
                 {isOpen && (
                   <div className="px-5 pb-5 border-t border-gray-50 bg-white">
+                    {(() => {
+                      const analytics = computeMemberAnalytics(m.id);
+                      return (
+                        <div className="mt-4 mb-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+                          <div className="p-3 rounded-xl bg-gradient-to-br from-sky-50 to-white border border-sky-100">
+                            <div className="text-[10px] text-gray-500 flex items-center gap-1">
+                              <Clock size={10} /> 最近到店
+                            </div>
+                            <div className="font-display font-bold text-sky-700 mt-1 text-sm">
+                              {analytics.lastVisit ? formatDateDisplay(analytics.lastVisit) : '暂无'}
+                            </div>
+                          </div>
+                          <div className="p-3 rounded-xl bg-gradient-to-br from-green-50 to-white border border-green-100">
+                            <div className="text-[10px] text-gray-500 flex items-center gap-1">
+                              <MapPin size={10} /> 常用场地
+                            </div>
+                            <div className="font-display font-bold text-green-700 mt-1 text-sm">
+                              {analytics.favoriteCourtName ?? '暂无'}
+                            </div>
+                          </div>
+                          <div className="p-3 rounded-xl bg-gradient-to-br from-tennis-50 to-white border border-tennis-100">
+                            <div className="text-[10px] text-gray-500 flex items-center gap-1">
+                              <TrendingUp size={10} /> 累计消费
+                            </div>
+                            <div className="font-display font-bold text-tennis-800 mt-1 text-sm">
+                              ¥{analytics.totalSpend.toFixed(0)}
+                            </div>
+                          </div>
+                          <div className="p-3 rounded-xl bg-gradient-to-br from-purple-50 to-white border border-purple-100">
+                            <div className="text-[10px] text-gray-500 flex items-center gap-1">
+                              <Ticket size={10} /> 次卡进度
+                            </div>
+                            <div className="font-display font-bold text-purple-700 mt-1 text-sm">
+                              {analytics.packageProgress.length > 0
+                                ? analytics.packageProgress.map((p) => `${p.remaining}/${p.total}`).join(' · ')
+                                : '无套餐'}
+                            </div>
+                          </div>
+
+                          {analytics.monthlyTrend.length > 0 && (
+                            <div className="col-span-2 md:col-span-4 p-3 rounded-xl bg-gray-50 border border-gray-100">
+                              <div className="text-[10px] text-gray-500 mb-2 flex items-center gap-1">
+                                <TrendingUp size={10} /> 近月消费趋势
+                              </div>
+                              <div className="flex items-end gap-3 h-16">
+                                {analytics.monthlyTrend.map((t, i) => {
+                                  const max = Math.max(...analytics.monthlyTrend.map((x) => x.amount), 1);
+                                  const h = Math.max((t.amount / max) * 100, 8);
+                                  return (
+                                    <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                                      <div className="text-[9px] text-gray-500">¥{t.amount.toFixed(0)}</div>
+                                      <div
+                                        className="w-full rounded-t bg-gradient-to-t from-tennis-500 to-tennis-400 transition-all"
+                                        style={{ height: `${h}%` }}
+                                      />
+                                      <div className="text-[10px] text-gray-500 font-mono">{t.month.slice(2)}</div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
                     <div className="flex mt-3 mb-3 rounded-lg bg-gray-100 p-0.5">
                       <button
                         onClick={() => setActiveTab('bookings')}

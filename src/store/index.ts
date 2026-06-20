@@ -285,6 +285,9 @@ interface AppState {
   calcBilling: (startTime: string, endTime: string) => ReturnType<typeof calculateBilling>;
 
   computeDashboard: (base: string, range: DashboardRange) => DashboardSummary;
+  computeDailyReconciliation: (date: string) => import('@/types').DailyReconciliationSummary;
+  listDayTransactions: (date: string) => WalletTransaction[];
+  computeMemberAnalytics: (memberId: string) => import('@/types').MemberDetailAnalytics;
   listMemberBookings: (memberId: string) => Booking[];
   listMemberTxs: (memberId: string) => WalletTransaction[];
 }
@@ -577,6 +580,18 @@ export const useAppStore = create<AppState>((set, get) => ({
         payMethodForBill = payMethod;
         payStatus = 'paid';
         paidAt = now;
+        const tx: WalletTransaction = {
+          id: genId('wt_'),
+          memberId: member?.id,
+          type: payMethod === 'cash' ? 'cash_pay' : 'card_pay',
+          amount: billing.totalAmount,
+          bookingId: booking.id,
+          payMethod,
+          customerName: member?.name ?? customerName,
+          customerType,
+          createdAt: now,
+        };
+        nextTxs = [...nextTxs, tx];
       } else if (payMethod === 'package') {
         if (!member || !usePackageId) return { ok: false, error: '次卡核销异常' };
         nextPackages = nextPackages.map((p) =>
@@ -784,7 +799,28 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     } else {
       payMethod = method as PaymentMethod;
+      if (payMethod === 'cash' || payMethod === 'card') {
+        const booking = get().bookings.find((b) => b.id === bill.bookingId);
+        const tx: WalletTransaction = {
+          id: genId('wt_'),
+          memberId: bill.memberId,
+          type: payMethod === 'cash' ? 'cash_pay' : 'card_pay',
+          amount: bill.totalAmount,
+          billId: bill.id,
+          bookingId: bill.bookingId,
+          payMethod,
+          customerName: bill.memberSnapshot?.name ?? booking?.customerName,
+          customerType: booking?.customerType,
+          createdAt: now,
+        };
+        nextTxs = [...nextTxs, tx];
+      }
     }
+
+    const bookingPayMethod: any = payMethod ?? method;
+    const nextBookings = get().bookings.map((b) =>
+      b.id === bill.bookingId ? { ...b, payMethod: bookingPayMethod } : b
+    );
 
     const nextBills = get().bills.map((b) =>
       b.id === billId
@@ -792,11 +828,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         : b
     );
 
+    saveData('bookings', nextBookings);
     saveData('bills', nextBills);
     saveData('members', nextMembers);
     saveData('memberPackages', nextPackages);
     saveData('walletTxs', nextTxs);
-    set({ bills: nextBills, members: nextMembers, memberPackages: nextPackages, walletTxs: nextTxs });
+    set({ bookings: nextBookings, bills: nextBills, members: nextMembers, memberPackages: nextPackages, walletTxs: nextTxs });
     return { ok: true };
   },
 
@@ -950,6 +987,141 @@ export const useAppStore = create<AppState>((set, get) => ({
       avgUtilization: Number(avgUtil.toFixed(2)),
       courts: perCourt.sort((a, b) => b.revenue - a.revenue),
       memberRanking,
+    };
+  },
+
+  computeDailyReconciliation(date: string) {
+    const { walletTxs, bookings, bills } = get();
+    let cashIncome = 0;
+    let cardIncome = 0;
+    let walletIncome = 0;
+    let packageIncome = 0;
+    let rechargeIncome = 0;
+    let packageBuyIncome = 0;
+    let refundAmount = 0;
+    const txIds = new Set<string>();
+    const bookingIds = new Set<string>();
+
+    for (const tx of walletTxs) {
+      const txDate = tx.createdAt?.slice(0, 10);
+      if (txDate !== date) continue;
+      txIds.add(tx.id);
+      if (tx.bookingId) bookingIds.add(tx.bookingId);
+      switch (tx.type) {
+        case 'cash_pay': cashIncome += tx.amount; break;
+        case 'card_pay': cardIncome += tx.amount; break;
+        case 'consume': walletIncome += tx.amount; break;
+        case 'package_use': packageIncome += tx.amount > 0 ? tx.amount : 0; break;
+        case 'recharge': rechargeIncome += tx.amount; break;
+        case 'package_buy': packageBuyIncome += tx.amount; break;
+        case 'refund':
+        case 'package_refund':
+          refundAmount += tx.amount; break;
+      }
+    }
+
+    // 对于历史数据（老的 paid 账单没有对应 tx），补上
+    for (const bill of bills) {
+      const billDate = bill.paidAt?.slice(0, 10) ?? bill.createdAt.slice(0, 10);
+      if (billDate !== date) continue;
+      if (bill.paymentStatus !== 'paid') continue;
+      // 有对应 tx 的不计入
+      const hasTx = Array.from(txIds).some((id) => walletTxs.find((t) => t.id === id)?.billId === bill.id);
+      if (hasTx) continue;
+      if (bill.paymentMethod === 'cash') cashIncome += bill.totalAmount;
+      else if (bill.paymentMethod === 'card') cardIncome += bill.totalAmount;
+      else if (bill.paymentMethod === 'wallet') walletIncome += bill.totalAmount;
+    }
+
+    const totalIncome = cashIncome + cardIncome + walletIncome + packageIncome + rechargeIncome + packageBuyIncome;
+
+    return {
+      date,
+      cashIncome: Number(cashIncome.toFixed(2)),
+      cardIncome: Number(cardIncome.toFixed(2)),
+      walletIncome: Number(walletIncome.toFixed(2)),
+      packageIncome: Number(packageIncome.toFixed(2)),
+      rechargeIncome: Number(rechargeIncome.toFixed(2)),
+      packageBuyIncome: Number(packageBuyIncome.toFixed(2)),
+      refundAmount: Number(refundAmount.toFixed(2)),
+      totalIncome: Number(totalIncome.toFixed(2)),
+      netIncome: Number((totalIncome - refundAmount).toFixed(2)),
+      txCount: txIds.size,
+      bookingCount: bookingIds.size,
+    };
+  },
+
+  listDayTransactions(date: string) {
+    return get().walletTxs
+      .filter((t) => (t.createdAt?.slice(0, 10) ?? '') === date)
+      .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+  },
+
+  computeMemberAnalytics(memberId: string) {
+    const { bookings, bills, walletTxs, courts, memberPackages } = get();
+    const mBookings = bookings.filter((b) => b.memberId === memberId);
+    const mTxs = walletTxs.filter((t) => t.memberId === memberId);
+    const mPackages = memberPackages.filter((p) => p.memberId === memberId);
+
+    let totalSpend = 0;
+    let totalRecharge = 0;
+    for (const tx of mTxs) {
+      if (tx.type === 'consume' || tx.type === 'cash_pay' || tx.type === 'card_pay') totalSpend += tx.amount;
+      if (tx.type === 'recharge') totalRecharge += tx.amount;
+    }
+
+    const lastVisit = mBookings.length > 0
+      ? mBookings.sort((a, b) => (b.date + b.startTime).localeCompare(a.date + a.startTime))[0].date
+      : null;
+
+    // 常用场地
+    const courtCount = new Map<string, number>();
+    for (const b of mBookings) {
+      if (b.status !== 'active') continue;
+      courtCount.set(b.courtId, (courtCount.get(b.courtId) ?? 0) + 1);
+    }
+    let favoriteCourtId: string | null = null;
+    let maxCount = 0;
+    for (const [id, c] of courtCount.entries()) {
+      if (c > maxCount) { maxCount = c; favoriteCourtId = id; }
+    }
+    const favoriteCourt = favoriteCourtId ? courts.find((c) => c.id === favoriteCourtId) : null;
+
+    // 近 6 个月趋势
+    const monthMap = new Map<string, { amount: number; count: number }>();
+    for (const b of mBookings) {
+      const bill = bills.find((x) => x.bookingId === b.id);
+      if (!bill || bill.paymentStatus !== 'paid') continue;
+      const m = b.date.slice(0, 7);
+      const cur = monthMap.get(m) ?? { amount: 0, count: 0 };
+      cur.amount += bill.totalAmount;
+      cur.count += 1;
+      monthMap.set(m, cur);
+    }
+    const monthlyTrend = Array.from(monthMap.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .slice(-6)
+      .map(([month, v]) => ({ month, amount: Number(v.amount.toFixed(2)), count: v.count }));
+
+    // 次卡进度
+    const packageProgress = mPackages.map((p) => ({
+      packageName: p.packageName,
+      total: p.totalCount,
+      used: p.usedCount,
+      remaining: p.remainingCount,
+      pct: Number(((p.usedCount / Math.max(p.totalCount, 1)) * 100).toFixed(1)),
+    }));
+
+    return {
+      memberId,
+      totalSpend: Number(totalSpend.toFixed(2)),
+      totalRecharge: Number(totalRecharge.toFixed(2)),
+      bookingCount: mBookings.length,
+      lastVisit,
+      favoriteCourtId,
+      favoriteCourtName: favoriteCourt?.name ?? null,
+      monthlyTrend,
+      packageProgress,
     };
   },
 

@@ -50,6 +50,10 @@ function txTypeMeta(type: WalletTxType) {
       return { label: '次卡核销', color: 'text-amber-700', bg: 'bg-amber-50', border: 'border-amber-200', icon: MinusCircle, dir: 'out' as const };
     case 'package_refund':
       return { label: '次卡退回', color: 'text-teal-600', bg: 'bg-teal-50', border: 'border-teal-200', icon: RefreshCcw, dir: 'in' as const };
+    case 'cash_pay':
+      return { label: '现金收款', color: 'text-green-700', bg: 'bg-green-50', border: 'border-green-200', icon: CreditCard, dir: 'in' as const };
+    case 'card_pay':
+      return { label: '刷卡收款', color: 'text-blue-700', bg: 'bg-blue-50', border: 'border-blue-200', icon: CreditCard, dir: 'in' as const };
   }
 }
 
@@ -114,7 +118,7 @@ export default function Bills() {
       const court = booking ? courts.find((c) => c.id === booking.courtId) : undefined;
       return {
         ...tx,
-        memberName: member?.name,
+        memberName: member?.name ?? tx.customerName,
         memberLevel: member?.level,
         memberPhone: member?.phone,
         relatedBill: bill,
@@ -124,7 +128,7 @@ export default function Bills() {
     });
     let filtered = enriched;
     if (txTypeFilter === 'consume_all') {
-      filtered = filtered.filter((t) => t.type === 'consume' || t.type === 'package_use');
+      filtered = filtered.filter((t) => t.type === 'consume' || t.type === 'package_use' || t.type === 'cash_pay' || t.type === 'card_pay');
     } else if (txTypeFilter !== 'all') {
       filtered = filtered.filter((t) => t.type === txTypeFilter);
     }
@@ -133,6 +137,7 @@ export default function Bills() {
       filtered = filtered.filter((t) =>
         t.memberName?.toLowerCase().includes(kw) ||
         t.memberPhone?.includes(kw) ||
+        t.customerName?.toLowerCase().includes(kw) ||
         t.relatedBill?.billNo.toLowerCase().includes(kw) ||
         t.note?.toLowerCase().includes(kw)
       );
@@ -433,6 +438,14 @@ export default function Bills() {
                                 {isIn ? '+' : '-'}¥{tx.amount.toFixed(2)}
                               </span>
                             </div>
+                            {tx.payMethod && (
+                              <div className="flex justify-between">
+                                <span className="text-gray-400">支付方式</span>
+                                <span className="font-medium">
+                                  {tx.payMethod === 'cash' ? '现金' : tx.payMethod === 'card' ? '刷卡' : tx.payMethod === 'wallet' ? '余额扣款' : '次卡核销'}
+                                </span>
+                              </div>
+                            )}
                             {tx.relatedBill && (
                               <div className="flex justify-between">
                                 <span className="text-gray-400">关联账单</span>
@@ -445,6 +458,18 @@ export default function Bills() {
                                 <span className="font-medium">
                                   {tx.relatedCourtName} · {tx.relatedBooking.date} {tx.relatedBooking.startTime}-{tx.relatedBooking.endTime}
                                 </span>
+                              </div>
+                            )}
+                            {tx.balanceAfter !== undefined && (
+                              <div className="flex justify-between">
+                                <span className="text-gray-400">余额变动后</span>
+                                <span className="font-semibold text-green-700">¥{tx.balanceAfter.toFixed(2)}</span>
+                              </div>
+                            )}
+                            {tx.packageBalanceAfter !== undefined && (
+                              <div className="flex justify-between">
+                                <span className="text-gray-400">次卡变动后</span>
+                                <span className="font-semibold text-purple-700">{tx.packageBalanceAfter} 次</span>
                               </div>
                             )}
                             {tx.note && (
