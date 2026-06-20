@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react';
 import {
   Receipt, ChevronDown, ChevronUp, Printer, Search, DollarSign, RotateCcw,
-  Filter as FilterIcon, Clock, CheckCircle2, Undo2,
+  Filter as FilterIcon, Clock, CheckCircle2, Undo2, Wallet, CreditCard, Users,
+  User, Phone, Star, AlertTriangle,
 } from 'lucide-react';
-import { useAppStore } from '@/store';
+import { useAppStore, getLevelMeta } from '@/store';
 import PageHeader from '@/components/PageHeader';
 import { tierColorClass } from '@/utils/billing';
 import { formatDateDisplay } from '@/utils/time';
-import type { PaymentStatus, RefundReason } from '@/types';
+import type { PaymentStatus, PaymentMethod, RefundReason } from '@/types';
 
 const STATUS_FILTERS: { value: 'all' | PaymentStatus; label: string; color: string }[] = [
   { value: 'all', label: '全部', color: 'bg-gray-100 text-gray-700 border-gray-200' },
@@ -33,33 +34,56 @@ function statusMeta(s: PaymentStatus) {
   }
 }
 
+function paymentMethodLabel(m?: PaymentMethod) {
+  if (!m) return { label: '待结算', icon: Clock, color: 'text-gray-500', bg: 'bg-gray-100' };
+  switch (m) {
+    case 'cash':
+      return { label: '现金收款', icon: CreditCard, color: 'text-green-700', bg: 'bg-green-50' };
+    case 'wallet':
+      return { label: '余额扣款', icon: Wallet, color: 'text-tennis-700', bg: 'bg-tennis-50' };
+    case 'card':
+      return { label: '刷卡收款', icon: CreditCard, color: 'text-blue-700', bg: 'bg-blue-50' };
+  }
+}
+
 export default function Bills() {
   const bills = useAppStore((s) => s.bills);
   const bookings = useAppStore((s) => s.bookings);
   const courts = useAppStore((s) => s.courts);
+  const members = useAppStore((s) => s.members);
   const markBillPaid = useAppStore((s) => s.markBillPaid);
+  const settleBill = useAppStore((s) => s.settleBill);
 
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | PaymentStatus>('all');
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [toast, setToast] = useState('');
+
+  function showToast(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(''), 2200);
+  }
 
   const list = useMemo(() => {
     const merged = bills.map((bill) => {
       const booking = bookings.find((b) => b.id === bill.bookingId);
       const court = booking ? courts.find((c) => c.id === booking.courtId) : undefined;
-      return { bill, booking, court };
+      const member = bill.memberId ? members.find((m) => m.id === bill.memberId) : undefined;
+      return { bill, booking, court, member };
     });
     const sorted = merged.sort((a, b) => (b.bill.createdAt ?? '').localeCompare(a.bill.createdAt ?? ''));
     const filtered = statusFilter === 'all' ? sorted : sorted.filter((x) => x.bill.paymentStatus === statusFilter);
     if (!keyword.trim()) return filtered;
     const kw = keyword.trim().toLowerCase();
-    return filtered.filter(({ bill, booking, court }) =>
+    return filtered.filter(({ bill, booking, court, member }) =>
       bill.billNo.toLowerCase().includes(kw) ||
       booking?.customerName.toLowerCase().includes(kw) ||
       court?.name.toLowerCase().includes(kw) ||
-      court?.code.toLowerCase().includes(kw)
+      court?.code.toLowerCase().includes(kw) ||
+      member?.name.toLowerCase().includes(kw) ||
+      member?.phone.includes(kw)
     );
-  }, [bills, bookings, courts, keyword, statusFilter]);
+  }, [bills, bookings, courts, members, keyword, statusFilter]);
 
   const stats = useMemo(() => {
     const pending = bills.filter((b) => b.paymentStatus === 'pending');
@@ -79,8 +103,24 @@ export default function Bills() {
     window.print();
   }
 
+  function handleSettle(billId: string, method: PaymentMethod, memberHint?: { name: string }) {
+    const res = settleBill(billId, method);
+    if (!res.ok) {
+      showToast('收款失败：' + (res.error ?? ''));
+      return;
+    }
+    const label = method === 'wallet' ? '余额扣款' : method === 'cash' ? '现金收款' : '刷卡收款';
+    showToast(`${memberHint ? `会员「${memberHint.name}」` : ''}${label}成功！`);
+  }
+
   return (
     <div>
+      {toast && (
+        <div className="fixed top-6 right-6 z-50 card bg-tennis-900 text-white px-4 py-2.5 animate-fade-in-up shadow-lg text-sm">
+          {toast}
+        </div>
+      )}
+
       <PageHeader
         title="账单中心"
         subtitle="查看账单、标记收款、跟踪退款记录，掌握资金流水"
@@ -92,8 +132,8 @@ export default function Bills() {
               <input
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
-                placeholder="搜索账单号/姓名/场地..."
-                className="input-base pl-9 w-64"
+                placeholder="搜索账单号/姓名/场地/会员手机号..."
+                className="input-base pl-9 w-72"
               />
             </div>
           </div>
@@ -159,10 +199,14 @@ export default function Bills() {
         {list.length === 0 && (
           <div className="card p-10 text-center text-gray-400">暂无匹配的账单记录</div>
         )}
-        {list.map(({ bill, booking, court }) => {
+        {list.map(({ bill, booking, court, member }) => {
           const isOpen = expanded === bill.id;
           const sMeta = statusMeta(bill.paymentStatus);
           const StatusIcon = sMeta.icon;
+          const payMeta = paymentMethodLabel(bill.paymentMethod);
+          const customerType = booking?.customerType ?? 'walkin';
+          const displayMember = member ?? bill.memberSnapshot;
+          const levelMeta = displayMember?.level ? getLevelMeta(displayMember.level) : null;
           return (
             <div key={bill.id} className="card animate-fade-in-up overflow-hidden">
               <div
@@ -183,6 +227,11 @@ export default function Bills() {
                       <span className={`tag border ${sMeta.color} inline-flex items-center gap-1`}>
                         <StatusIcon size={11} /> {sMeta.label}
                       </span>
+                      {bill.paymentStatus !== 'pending' && bill.paymentMethod && (
+                        <span className={`tag border ${payMeta.bg} ${payMeta.color} border-gray-200 inline-flex items-center gap-1`}>
+                          {(() => { const I = payMeta.icon; return <I size={10} />; })()} {payMeta.label}
+                        </span>
+                      )}
                       {booking?.bookingType === 'doubles' && (
                         <span className="tag bg-ball-100 text-ball-700 border border-ball-200">双打</span>
                       )}
@@ -192,9 +241,30 @@ export default function Bills() {
                       {booking?.status === 'cancelled' && bill.paymentStatus !== 'refunded' && (
                         <span className="tag bg-gray-100 text-gray-500 border border-gray-200">预约已退订</span>
                       )}
+                      {customerType === 'member' && (
+                        <span className="tag bg-purple-50 text-purple-700 border border-purple-200 inline-flex items-center gap-1">
+                          <Users size={10} /> 会员
+                        </span>
+                      )}
+                      {customerType === 'walkin' && (
+                        <span className="tag bg-gray-50 text-gray-600 border border-gray-200 inline-flex items-center gap-1">
+                          <User size={10} /> 散客
+                        </span>
+                      )}
                     </div>
-                    <div className="text-xs text-gray-500 mt-0.5 truncate">
-                      {booking?.customerName} · {court?.name} ({court?.code}) · {booking?.date && formatDateDisplay(booking.date)} {booking?.startTime}-{booking?.endTime}
+                    <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                      <span>{booking?.customerName} · {court?.name} ({court?.code})</span>
+                      {displayMember && (
+                        <span className="flex items-center gap-1">
+                          <Phone size={10} /> {displayMember.phone}
+                          {levelMeta && (
+                            <span className={`tag border text-[10px] ${levelMeta.bg} ${levelMeta.color}`}>
+                              <Star size={9} className="mr-0.5 inline" /> {levelMeta.label}
+                            </span>
+                          )}
+                        </span>
+                      )}
+                      <span>· {booking?.date && formatDateDisplay(booking.date)} {booking?.startTime}-{booking?.endTime}</span>
                     </div>
                   </div>
                 </div>
@@ -240,6 +310,48 @@ export default function Bills() {
                     </div>
 
                     <div className="space-y-4">
+                      {(displayMember || customerType === 'walkin') && (
+                        <div className={`p-4 rounded-xl border ${
+                          customerType === 'member'
+                            ? 'bg-gradient-to-br from-ball-50 to-tennis-50 border-tennis-200'
+                            : 'bg-gray-50 border-gray-100'
+                        }`}>
+                          <div className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                            {customerType === 'member' ? <Users size={15} className="text-tennis-600" /> : <User size={15} />}
+                            {customerType === 'member' ? '会员信息' : '散客信息'}
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className={`w-12 h-12 rounded-full flex items-center justify-center font-display font-bold text-lg shadow-sm ring-2 ring-white ${
+                              customerType === 'member' && levelMeta
+                                ? `${levelMeta.bg} ${levelMeta.color}`
+                                : 'bg-gray-200 text-gray-600'
+                            }`}>
+                              {(booking?.customerName ?? '?').charAt(0)}
+                            </div>
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-gray-800">{booking?.customerName}</span>
+                                {levelMeta && (
+                                  <span className={`tag border ${levelMeta.bg} ${levelMeta.color}`}>
+                                    <Star size={10} className="mr-1 inline" /> {levelMeta.label}
+                                  </span>
+                                )}
+                              </div>
+                              {displayMember?.phone && (
+                                <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                                  <Phone size={11} /> {displayMember.phone}
+                                </div>
+                              )}
+                              {customerType === 'member' && member && (
+                                <div className="text-xs text-green-700 mt-0.5">
+                                  当前余额：¥{member.balance.toFixed(2)}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                       {bill.shares && bill.shares.length > 1 && (
                         <div className="p-4 rounded-xl bg-tennis-50/50 border border-tennis-100">
                           <div className="text-sm font-semibold text-tennis-800 mb-3">双打费用分摊</div>
@@ -263,20 +375,33 @@ export default function Bills() {
                             <Undo2 size={15} /> 退款记录 ({bill.refunds.length})
                           </div>
                           <div className="space-y-2">
-                            {bill.refunds.map((r) => (
-                              <div key={r.id} className="p-3 rounded-lg bg-white border border-red-100 text-sm">
-                                <div className="flex items-center justify-between">
-                                  <span className="tag bg-red-100 text-red-700 border border-red-200">
-                                    {REASON_LABEL[r.reason] ?? '退款'}
-                                  </span>
-                                  <span className="font-bold text-red-600">-¥{r.amount.toFixed(2)}</span>
+                            {bill.refunds.map((r) => {
+                              const method = r.refundMethod === 'wallet'
+                                ? { label: '退回余额', bg: 'bg-green-100 text-green-700 border-green-200', icon: Wallet }
+                                : r.refundMethod === 'cash'
+                                  ? { label: '现金退款', bg: 'bg-red-100 text-red-700 border-red-200', icon: CreditCard }
+                                  : { label: '刷卡退款', bg: 'bg-blue-100 text-blue-700 border-blue-200', icon: CreditCard };
+                              const I = method.icon;
+                              return (
+                                <div key={r.id} className="p-3 rounded-lg bg-white border border-red-100 text-sm">
+                                  <div className="flex items-center justify-between mb-1.5">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="tag bg-red-100 text-red-700 border border-red-200">
+                                        {REASON_LABEL[r.reason] ?? '退款'}
+                                      </span>
+                                      <span className={`tag border ${method.bg}`}>
+                                        <I size={10} className="mr-1 inline" /> {method.label}
+                                      </span>
+                                    </div>
+                                    <span className="font-bold text-red-600">-¥{r.amount.toFixed(2)}</span>
+                                  </div>
+                                  {r.note && <div className="text-xs text-gray-500">备注：{r.note}</div>}
+                                  <div className="text-[11px] text-gray-400 mt-1">
+                                    {new Date(r.createdAt).toLocaleString('zh-CN')}
+                                  </div>
                                 </div>
-                                {r.note && <div className="text-xs text-gray-500 mt-1">备注：{r.note}</div>}
-                                <div className="text-[11px] text-gray-400 mt-1">
-                                  {new Date(r.createdAt).toLocaleString('zh-CN')}
-                                </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       )}
@@ -292,6 +417,11 @@ export default function Bills() {
                             <div>
                               <span className="inline-block w-16 text-green-600 font-semibold">收款：</span>
                               {new Date(bill.paidAt).toLocaleString('zh-CN')}
+                              {bill.paymentMethod && (
+                                <span className="ml-2 text-gray-500">
+                                  ({bill.paymentMethod === 'wallet' ? '余额扣款' : bill.paymentMethod === 'cash' ? '现金' : '刷卡'})
+                                </span>
+                              )}
                             </div>
                           )}
                           {booking?.cancelledAt && (
@@ -310,16 +440,39 @@ export default function Bills() {
                       <Printer size={14} className="mr-1.5" /> 打印账单
                     </button>
                     {bill.paymentStatus === 'pending' && (
-                      <button
-                        onClick={() => {
-                          if (confirm(`确认将账单 ${bill.billNo} 标记为已收款？金额 ¥${bill.totalAmount.toFixed(2)}`)) {
-                            markBillPaid(bill.id);
-                          }
-                        }}
-                        className="btn-primary"
-                      >
-                        <DollarSign size={14} className="mr-1.5" /> 标记已收款
-                      </button>
+                      <>
+                        <button
+                          onClick={() => {
+                            if (confirm(`确认将账单 ${bill.billNo} 标记为现金收款？金额 ¥${bill.totalAmount.toFixed(2)}`)) {
+                              markBillPaid(bill.id);
+                              showToast('现金收款已登记');
+                            }
+                          }}
+                          className="btn-primary"
+                        >
+                          <CreditCard size={14} className="mr-1.5" /> 现金收款
+                        </button>
+                        {displayMember && (
+                          <button
+                            onClick={() => {
+                              const mem = members.find((m) => m.id === (displayMember as any).id);
+                              if (mem && mem.balance < bill.totalAmount) {
+                                alert(`会员「${mem.name}」余额不足（当前 ¥${mem.balance.toFixed(2)}），请先充值后再操作，或使用现金收款。`);
+                                return;
+                              }
+                              if (confirm(`确认使用会员「${displayMember.name}」的余额扣款 ¥${bill.totalAmount.toFixed(2)}？`)) {
+                                handleSettle(bill.id, 'wallet', { name: displayMember.name });
+                              }
+                            }}
+                            className="btn-accent"
+                          >
+                            <Wallet size={14} className="mr-1.5" /> 余额扣款
+                            {member && (
+                              <span className="ml-1.5 text-[10px] opacity-90">(¥{member.balance.toFixed(2)})</span>
+                            )}
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>

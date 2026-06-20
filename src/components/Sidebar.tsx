@@ -1,8 +1,10 @@
 import { NavLink } from 'react-router-dom';
-import { Calendar, MapPin, Receipt, Percent, Trophy } from 'lucide-react';
+import { Calendar, MapPin, Receipt, Percent, Trophy, Users, BarChart3 } from 'lucide-react';
 
 const navItems = [
   { to: '/', label: '排期总览', icon: Calendar },
+  { to: '/dashboard', label: '运营看板', icon: BarChart3 },
+  { to: '/members', label: '会员管理', icon: Users },
   { to: '/courts', label: '场地管理', icon: MapPin },
   { to: '/rates', label: '费率设置', icon: Percent },
   { to: '/bills', label: '账单中心', icon: Receipt },
@@ -21,7 +23,7 @@ export default function Sidebar() {
         </div>
       </div>
 
-      <nav className="flex-1 p-3 space-y-1">
+      <nav className="flex-1 p-3 space-y-1 overflow-y-auto scrollbar-thin">
         {navItems.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
@@ -43,7 +45,7 @@ export default function Sidebar() {
             <Trophy size={14} className="text-ball-400" />
             <span className="font-semibold text-ball-400">运营小贴士</span>
           </div>
-          高峰时段 18:00-22:00 最受欢迎，建议提前预约。
+          推荐会员在高峰前 24 小时完成预约，可在看板查看场地利用率。
         </div>
       </div>
     </aside>

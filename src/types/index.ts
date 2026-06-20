@@ -25,6 +25,34 @@ export type BookingType = 'singles' | 'doubles';
 
 export type BookingStatus = 'active' | 'cancelled';
 
+export type MemberLevel = 'normal' | 'silver' | 'gold' | 'platinum';
+
+export interface Member {
+  id: string;
+  name: string;
+  phone: string;
+  level: MemberLevel;
+  balance: number;
+  totalRecharge: number;
+  totalConsume: number;
+  note?: string;
+  createdAt: string;
+}
+
+export type WalletTxType = 'recharge' | 'consume' | 'refund';
+
+export interface WalletTransaction {
+  id: string;
+  memberId: string;
+  type: WalletTxType;
+  amount: number;
+  balanceAfter: number;
+  billId?: string;
+  bookingId?: string;
+  note?: string;
+  createdAt: string;
+}
+
 export interface Booking {
   id: string;
   courtId: string;
@@ -32,6 +60,8 @@ export interface Booking {
   startTime: string;
   endTime: string;
   customerName: string;
+  customerType: 'member' | 'walkin';
+  memberId?: string;
   bookingType: BookingType;
   teammates: string[];
   totalAmount: number;
@@ -64,6 +94,7 @@ export interface DoublesShare {
 }
 
 export type PaymentStatus = 'pending' | 'paid' | 'refunded';
+export type PaymentMethod = 'cash' | 'wallet' | 'card';
 
 export type RefundReason = 'user_cancel' | 'system_cancel' | 'other';
 
@@ -73,6 +104,7 @@ export interface RefundRecord {
   bookingId: string;
   amount: number;
   reason: RefundReason;
+  refundMethod: PaymentMethod;
   note?: string;
   createdAt: string;
 }
@@ -85,6 +117,9 @@ export interface Bill {
   segments: BillingSegment[];
   shares?: DoublesShare[];
   paymentStatus: PaymentStatus;
+  paymentMethod?: PaymentMethod;
+  memberId?: string;
+  memberSnapshot?: { id: string; name: string; phone: string; level: MemberLevel };
   paidAt?: string;
   refundAmount?: number;
   refunds?: RefundRecord[];
@@ -100,4 +135,33 @@ export interface RateGap {
   startTime: string;
   endTime: string;
   durationMinutes: number;
+}
+
+export type DashboardRange = 'day' | 'week';
+
+export interface CourtStats {
+  courtId: string;
+  courtName: string;
+  courtCode: string;
+  totalMinutes: number;
+  bookedMinutes: number;
+  cancelledMinutes: number;
+  utilization: number;
+  revenue: number;
+  refunded: number;
+  bookingCount: number;
+  cancelCount: number;
+}
+
+export interface DashboardSummary {
+  range: DashboardRange;
+  from: string;
+  to: string;
+  totalRevenue: number;
+  totalRefund: number;
+  netRevenue: number;
+  totalBookings: number;
+  totalCancels: number;
+  avgUtilization: number;
+  courts: CourtStats[];
 }

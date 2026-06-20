@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Calendar, ChevronLeft, ChevronRight, Plus, XCircle, User, Users,
   CalendarDays, Grid3X3, Filter, RotateCcw,
@@ -11,6 +11,7 @@ import {
   formatDate, parseDate,
 } from '@/utils/time';
 import type { Booking, Court } from '@/types';
+import { useSearchParams } from 'react-router-dom';
 
 type ViewMode = 'day' | 'week';
 
@@ -18,13 +19,17 @@ const TIME_SLOTS = generateTimeSlots();
 const DAY_START_MIN = timeToMinutes('06:00');
 const DAY_END_MIN = timeToMinutes('22:00');
 const TOTAL_MIN = DAY_END_MIN - DAY_START_MIN;
+const COL_WIDTH = 150;
+const SLOT_HEIGHT = 44;
+const HEADER_HEIGHT = 64;
+const TIME_COL_WIDTH = 80;
 
-function getBookingTopHeight(b: Booking) {
+function getBookingTopHeightPx(b: Booking) {
   const start = timeToMinutes(b.startTime) - DAY_START_MIN;
   const end = timeToMinutes(b.endTime) - DAY_START_MIN;
-  const top = (start / TOTAL_MIN) * 100;
-  const height = Math.max(((end - start) / TOTAL_MIN) * 100, 4);
-  return { top: `${top}%`, height: `${height}%` };
+  const top = (start / TOTAL_MIN) * (TIME_SLOTS.length * SLOT_HEIGHT);
+  const height = Math.max(((end - start) / TOTAL_MIN) * (TIME_SLOTS.length * SLOT_HEIGHT), 20);
+  return { top: `${top}px`, height: `${height}px` };
 }
 
 function getWeekDates(base: string): string[] {
@@ -45,6 +50,7 @@ export default function Schedule() {
   const courts = useAppStore((s) => s.courts);
   const bookings = useAppStore((s) => s.bookings);
   const cancelBooking = useAppStore((s) => s.cancelBooking);
+  const [searchParams] = useSearchParams();
 
   const [viewMode, setViewMode] = useState<ViewMode>('day');
   const [cursorDate, setCursorDate] = useState(todayStr());
@@ -53,6 +59,17 @@ export default function Schedule() {
   const [modal, setModal] = useState<{ open: boolean; court: Court | null; date: string; start?: string; end?: string }>({
     open: false, court: null, date: todayStr(),
   });
+
+  const initialCourtId = searchParams.get('courtId');
+  const initialDate = searchParams.get('date');
+  useEffect(() => {
+    if (initialCourtId && courts.length > 0) {
+      setSelectedCourts([initialCourtId]);
+    }
+    if (initialDate) {
+      setCursorDate(initialDate);
+    }
+  }, [initialCourtId, initialDate, courts.length]);
 
   const activeCourts = useMemo(() => {
     const list = courts.filter((c) => c.active);
@@ -113,6 +130,8 @@ export default function Schedule() {
   function getBookingsForCol(courtId: string, date: string) {
     return bookings.filter((b) => b.courtId === courtId && b.date === date);
   }
+
+  const innerContentWidth = TIME_COL_WIDTH + totalCols * COL_WIDTH;
 
   return (
     <div>
@@ -218,10 +237,10 @@ export default function Schedule() {
         <div className="inline-flex items-center gap-1.5 text-xs text-gray-600 px-2.5 py-1 rounded-full bg-white border">
           <span className="w-3 h-3 rounded bg-tennis-600/80" /> 已预约
         </div>
-        <div className="inline-flex items-center gap-1.5 text-xs text-gray-600 px-2.5 py-1 rounded-full bg-white border">
+        <div className="inline-flex items-center gap gap-1.5 text-xs text-gray-600 px-2.5 py-1 rounded-full bg-white border">
           <span className="w-3 h-3 rounded bg-ball-400/60" /> 可预约
         </div>
-        <div className="inline-flex items-center gap-1.5 text-xs text-gray-600 px-2.5 py-1 rounded-full bg-white border">
+        <div className="inline-flex items gap gap-1.5 text-xs text-gray-600 px-2.5 py-1 rounded-full bg-white border">
           <span className="w-3 h-3 rounded bg-gray-400/70" /> 已退订（可点击重约）
         </div>
       </div>
@@ -229,66 +248,146 @@ export default function Schedule() {
       {activeCourts.length === 0 ? (
         <div className="card p-10 text-center text-gray-400">暂无启用的场地，请先到「场地管理」新增</div>
       ) : (
-        <div className="card overflow-hidden relative">
+        <div className="card overflow-hidden">
           <div className="overflow-x-auto scrollbar-thin">
             <div
-              className="grid"
-              style={{
-                gridTemplateColumns: `80px repeat(${totalCols}, minmax(140px, 1fr))`,
-                minWidth: 80 + totalCols * 150,
-              }}
+              className="relative"
+              style={{ width: `${innerContentWidth}px`, minWidth: '100%' }}
             >
-              <div className="sticky left-0 z-10 bg-gradient-to-b from-tennis-50 to-white border-b border-r border-tennis-100" />
+              <div
+                className="grid"
+                style={{
+                  gridTemplateColumns: `${TIME_COL_WIDTH}px repeat(${totalCols}, ${COL_WIDTH}px)`,
+                }}
+              >
+                <div className="sticky left-0 z-10 bg-gradient-to-b from-tennis-50 to-white border-b border-r border-tennis-100" />
 
-              {columns.map((col, idx) => {
-                const isFirstOfDay = viewMode === 'week' ? idx % 7 === 0 : true;
-                const dayIdx = viewMode === 'week' ? idx % 7 : 0;
-                const isWeekend = dayIdx >= 5;
+                {columns.map((col, idx) => {
+                  const isFirstOfDay = viewMode === 'week' ? idx % 7 === 0 : true;
+                  const dayIdx = viewMode === 'week' ? idx % 7 : 0;
+                  const isWeekend = dayIdx >= 5;
+                  return (
+                    <div
+                      key={`${col.court.id}-${col.date}-${idx}`}
+                      className={`px-2 py-3 bg-gradient-to-b from-tennis-50 to-white border-b border-r border-tennis-100 text-center ${
+                        isWeekend ? 'bg-amber-50/40' : ''
+                      } ${!isFirstOfDay && viewMode === 'week' ? 'border-l border-dashed border-tennis-200' : ''}`}
+                      style={{ height: `${HEADER_HEIGHT}px` }}
+                    >
+                      {viewMode === 'week' && (
+                        <div className={`text-[10px] font-semibold ${isWeekend ? 'text-amber-600' : 'text-gray-400'}`}>
+                          {WEEK_LABELS[dayIdx]}
+                        </div>
+                      )}
+                      <div className="font-display font-bold text-tennis-950 text-sm leading-tight">
+                        {col.court.name}
+                      </div>
+                      <div className="text-[10px] text-gray-500 mt-0.5">
+                        {viewMode === 'week' ? formatDateDisplay(col.date).split(' ')[0] : col.court.code}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {TIME_SLOTS.map((slot, slotIdx) => {
+                  const { end } = slotToRange(slotIdx);
+                  return (
+                    <div key={slot} className="contents group">
+                      <div
+                        className="sticky left-0 z-10 bg-white border-r border-b border-gray-100 text-xs text-gray-500 px-2 py-3 text-right font-mono group-hover:bg-tennis-50 transition"
+                        style={{ height: `${SLOT_HEIGHT}px` }}
+                      >
+                        {slot}
+                      </div>
+                      {columns.map((col, idx) => {
+                        const hour = Number(slot.slice(0, 2));
+                        const isHourMark = hour % 2 === 0 && slot.endsWith(':00');
+                        const dayIdx = viewMode === 'week' ? idx % 7 : 0;
+                        const isWeekend = dayIdx >= 5;
+                        return (
+                          <div
+                            key={col.court.id + col.date + slot + idx}
+                            onClick={() => openBooking(col.court, col.date, slot, end)}
+                            className={`relative border-r border-b cursor-pointer transition ${
+                              isHourMark
+                                ? `bg-gray-50/60 border-gray-200 ${isWeekend ? 'bg-amber-50/30' : ''}`
+                                : `border-gray-100 bg-white ${isWeekend ? 'bg-amber-50/10' : ''}`
+                            } hover:bg-ball-300/30`}
+                            style={{ height: `${SLOT_HEIGHT}px` }}
+                            title={`${col.court.name} · ${formatDateDisplay(col.date)} ${slot}-${end} 点击预约`}
+                          />
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {columns.map((col, colIdx) => {
+                const colBookings = getBookingsForCol(col.court.id, col.date);
+                if (colBookings.length === 0) return null;
+                const left = TIME_COL_WIDTH + colIdx * COL_WIDTH + 2;
+                const width = COL_WIDTH - 4;
                 return (
                   <div
-                    key={`${col.court.id}-${col.date}-${idx}`}
-                    className={`px-2 py-3 bg-gradient-to-b from-tennis-50 to-white border-b border-r border-tennis-100 text-center ${
-                      isWeekend ? 'bg-amber-50/40' : ''
-                    } ${!isFirstOfDay && viewMode === 'week' ? 'border-l border-dashed border-tennis-200' : ''}`}
+                    key={col.court.id + col.date + '-overlay-' + colIdx}
+                    className="pointer-events-none absolute"
+                    style={{
+                      left: `${left}px`,
+                      top: `${HEADER_HEIGHT}px`,
+                      width: `${width}px`,
+                      height: `${TIME_SLOTS.length * SLOT_HEIGHT}px`,
+                    }}
                   >
-                    {viewMode === 'week' && (
-                      <div className={`text-[10px] font-semibold ${isWeekend ? 'text-amber-600' : 'text-gray-400'}`}>
-                        {WEEK_LABELS[dayIdx]}
-                      </div>
-                    )}
-                    <div className="font-display font-bold text-tennis-950 text-sm leading-tight">
-                      {col.court.name}
-                    </div>
-                    <div className="text-[10px] text-gray-500 mt-0.5">
-                      {viewMode === 'week' ? formatDateDisplay(col.date).split(' ')[0] : col.court.code}
-                    </div>
-                  </div>
-                );
-              })}
-
-              {TIME_SLOTS.map((slot, slotIdx) => {
-                const { end } = slotToRange(slotIdx);
-                return (
-                  <div key={slot} className="contents group">
-                    <div className="sticky left-0 z-10 bg-white border-r border-b border-gray-100 text-xs text-gray-500 px-2 py-3 text-right font-mono group-hover:bg-tennis-50 transition">
-                      {slot}
-                    </div>
-                    {columns.map((col, idx) => {
-                      const hour = Number(slot.slice(0, 2));
-                      const isHourMark = hour % 2 === 0 && slot.endsWith(':00');
-                      const dayIdx = viewMode === 'week' ? idx % 7 : 0;
-                      const isWeekend = dayIdx >= 5;
+                    {colBookings.map((b) => {
+                      const pos = getBookingTopHeightPx(b);
+                      const isCancelled = b.status === 'cancelled';
                       return (
-                        <div
-                          key={col.court.id + col.date + slot + idx}
-                          onClick={() => openBooking(col.court, col.date, slot, end)}
-                          className={`relative border-r border-b cursor-pointer transition min-h-[44px] ${
-                            isHourMark
-                              ? `bg-gray-50/60 border-gray-200 ${isWeekend ? 'bg-amber-50/30' : ''}`
-                              : `border-gray-100 bg-white ${isWeekend ? 'bg-amber-50/10' : ''}`
-                          } hover:bg-ball-300/30`}
-                          title={`${col.court.name} · ${formatDateDisplay(col.date)} ${slot}-${end} 点击预约`}
-                        />
+                        <button
+                          key={b.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (isCancelled) {
+                              openRebookFromCancelled(col.court, b);
+                            } else {
+                              onCancelBooking(b);
+                            }
+                          }}
+                          className={`absolute left-0 right-0 rounded-lg mx-0.5 px-2 py-1.5 text-left text-white text-[11px] overflow-hidden pointer-events-auto transition hover:brightness-110 shadow ${
+                            isCancelled
+                              ? 'bg-gradient-to-br from-gray-500 to-gray-600 ring-2 ring-dashed ring-ball-400/70'
+                              : 'bg-gradient-to-br from-tennis-700 to-tennis-800'
+                          }`}
+                          style={{ top: pos.top, height: pos.height }}
+                          title={
+                            isCancelled
+                              ? `已退订 · 点击按原时段重新预约：${b.customerName} ${b.startTime}-${b.endTime}`
+                              : `点击退订：${b.customerName} ${b.startTime}-${b.endTime}`
+                          }
+                        >
+                          <div className="flex items-center gap-1 font-semibold truncate">
+                            {b.bookingType === 'doubles' ? <Users size={12} /> : <User size={12} />}
+                            <span className="truncate">{b.customerName}</span>
+                            {b.customerType === 'member' && (
+                              <span className="ml-0.5 text-[9px] bg-ball-400/80 text-tennis-950 px-1 rounded font-bold">
+                                会员
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] opacity-90 font-mono leading-tight">
+                            {b.startTime}-{b.endTime} · ¥{b.totalAmount}
+                          </div>
+                          {isCancelled && (
+                            <div className="mt-0.5 text-[10px] bg-ball-400 text-tennis-950 font-bold rounded px-1 inline-block">
+                              ↻ 已退订，点此重约
+                            </div>
+                          )}
+                          {!isCancelled && (
+                            <div className="absolute top-1 right-1 opacity-0 hover:opacity-100 transition">
+                              <XCircle size={14} />
+                            </div>
+                          )}
+                        </button>
                       );
                     })}
                   </div>
@@ -296,73 +395,6 @@ export default function Schedule() {
               })}
             </div>
           </div>
-
-          {columns.map((col, colIdx) => {
-            const colBookings = getBookingsForCol(col.court.id, col.date);
-            if (colBookings.length === 0) return null;
-            const headerH = 64;
-            const colWidth = `calc((100% - 80px) / ${totalCols})`;
-            const left = `calc(80px + ${colIdx} * (100% - 80px) / ${totalCols} + 2px)`;
-            return (
-              <div
-                key={col.court.id + col.date + '-overlay-' + colIdx}
-                className="pointer-events-none absolute"
-                style={{
-                  left,
-                  top: `${headerH}px`,
-                  width: `calc(${colWidth} - 4px)`,
-                  height: `calc(${TIME_SLOTS.length} * 44px)`,
-                }}
-              >
-                {colBookings.map((b) => {
-                  const pos = getBookingTopHeight(b);
-                  const isCancelled = b.status === 'cancelled';
-                  return (
-                    <button
-                      key={b.id}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (isCancelled) {
-                          openRebookFromCancelled(col.court, b);
-                        } else {
-                          onCancelBooking(b);
-                        }
-                      }}
-                      className={`absolute left-0 right-0 rounded-lg mx-0.5 px-2 py-1.5 text-left text-white text-[11px] overflow-hidden pointer-events-auto transition hover:brightness-110 shadow ${
-                        isCancelled
-                          ? 'bg-gradient-to-br from-gray-500 to-gray-600 ring-2 ring-dashed ring-ball-400/70'
-                          : 'bg-gradient-to-br from-tennis-700 to-tennis-800'
-                      }`}
-                      style={{ top: pos.top, height: pos.height }}
-                      title={
-                        isCancelled
-                          ? `已退订 · 点击按原时段重新预约：${b.customerName} ${b.startTime}-${b.endTime}`
-                          : `点击退订：${b.customerName} ${b.startTime}-${b.endTime}`
-                      }
-                    >
-                      <div className="flex items-center gap-1 font-semibold truncate">
-                        {b.bookingType === 'doubles' ? <Users size={12} /> : <User size={12} />}
-                        <span className="truncate">{b.customerName}</span>
-                      </div>
-                      <div className="text-[10px] opacity-90 font-mono leading-tight">
-                        {b.startTime}-{b.endTime} · ¥{b.totalAmount}
-                      </div>
-                      {isCancelled && (
-                        <div className="mt-0.5 text-[10px] bg-ball-400 text-tennis-950 font-bold rounded px-1 inline-block">
-                          ↻ 已退订，点此重约
-                        </div>
-                      )}
-                      {!isCancelled && (
-                        <div className="absolute top-1 right-1 opacity-0 hover:opacity-100 transition">
-                          <XCircle size={14} />
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            );
-          })}
         </div>
       )}
 
@@ -398,6 +430,16 @@ export default function Schedule() {
                       <div className="min-w-0">
                         <div className="font-semibold text-gray-800 truncate">
                           {b.customerName}
+                          {b.customerType === 'member' && (
+                            <span className="ml-2 text-xs text-purple-600 font-normal inline-flex items-center gap-1">
+                              <Users size={10} /> 会员
+                            </span>
+                          )}
+                          {b.customerType === 'walkin' && (
+                            <span className="ml-2 text-xs text-gray-500 font-normal inline-flex items-center gap-1">
+                              <User size={10} /> 散客
+                            </span>
+                          )}
                           {b.bookingType === 'doubles' && (
                             <span className="ml-2 text-xs text-gray-500 font-normal">
                               双打（{b.teammates.length ? b.teammates.join('、') : '无队友'}）
