@@ -35,11 +35,13 @@ export interface Member {
   balance: number;
   totalRecharge: number;
   totalConsume: number;
+  totalPackageBuy: number;
+  totalPackageUse: number;
   note?: string;
   createdAt: string;
 }
 
-export type WalletTxType = 'recharge' | 'consume' | 'refund';
+export type WalletTxType = 'recharge' | 'consume' | 'refund' | 'package_buy' | 'package_use' | 'package_refund';
 
 export interface WalletTransaction {
   id: string;
@@ -47,8 +49,26 @@ export interface WalletTransaction {
   type: WalletTxType;
   amount: number;
   balanceAfter: number;
+  packageBalanceAfter?: number;
   billId?: string;
   bookingId?: string;
+  packageId?: string;
+  note?: string;
+  createdAt: string;
+}
+
+export type PackageType = 'count';
+
+export interface MemberPackage {
+  id: string;
+  memberId: string;
+  packageName: string;
+  totalCount: number;
+  usedCount: number;
+  remainingCount: number;
+  price: number;
+  perTimes: number;
+  expireAt?: string;
   note?: string;
   createdAt: string;
 }
@@ -65,6 +85,9 @@ export interface Booking {
   bookingType: BookingType;
   teammates: string[];
   totalAmount: number;
+  payMethod: PaymentMethod | 'pending' | 'package';
+  packageId?: string;
+  packageUsedCount?: number;
   status: BookingStatus;
   createdAt: string;
   cancelledAt?: string;
@@ -153,6 +176,15 @@ export interface CourtStats {
   cancelCount: number;
 }
 
+export interface MemberRankingItem {
+  memberId: string;
+  memberName: string;
+  memberLevel: MemberLevel;
+  bookingCount: number;
+  totalSpend: number;
+  totalRecharge: number;
+}
+
 export interface DashboardSummary {
   range: DashboardRange;
   from: string;
@@ -160,8 +192,18 @@ export interface DashboardSummary {
   totalRevenue: number;
   totalRefund: number;
   netRevenue: number;
+  memberRevenue: number;
+  walkinRevenue: number;
+  rechargeRevenue: number;
+  pendingAmount: number;
+  paidAmount: number;
   totalBookings: number;
   totalCancels: number;
+  memberBookingCount: number;
+  walkinBookingCount: number;
+  uniqueMembers: number;
+  repeatMemberRate: number;
   avgUtilization: number;
   courts: CourtStats[];
+  memberRanking: MemberRankingItem[];
 }

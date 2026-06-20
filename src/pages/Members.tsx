@@ -1,13 +1,13 @@
 import { useMemo, useState } from 'react';
 import {
-  Users, Plus, Edit2, Trash2, Search, Wallet, Phone, Star,
-  ChevronDown, ChevronUp, X, CreditCard, ArrowDownCircle, ArrowUpCircle, RotateCcw,
-  Calendar, Receipt,
+  Users, Plus, Edit2, Search, Wallet, Phone, Star,
+  ChevronDown, ChevronUp, CreditCard, ArrowDownCircle, ArrowUpCircle, RotateCcw,
+  Calendar, Receipt, Ticket, Package, Sparkles,
 } from 'lucide-react';
-import { useAppStore, getLevelMeta, MEMBER_LEVELS } from '@/store';
+import { useAppStore, getLevelMeta, MEMBER_LEVELS, PACKAGE_TEMPLATES } from '@/store';
 import PageHeader from '@/components/PageHeader';
 import Modal from '@/components/Modal';
-import type { Member, MemberLevel } from '@/types';
+import type { Member, MemberLevel, MemberPackage } from '@/types';
 import { formatDateDisplay } from '@/utils/time';
 
 function MemberLevelBadge({ level }: { level: MemberLevel }) {
@@ -17,6 +17,10 @@ function MemberLevelBadge({ level }: { level: MemberLevel }) {
       <Star size={10} className="mr-1 inline" /> {meta.label}
     </span>
   );
+}
+
+function useMemoEffect(fn: () => void, deps: any[]) {
+  useMemo(() => { fn(); }, deps); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 interface MemberModalProps {
@@ -208,8 +212,136 @@ function RechargeModal({ open, onClose, member, onSubmit }: RechargeModalProps) 
   );
 }
 
-function useMemoEffect(fn: () => void, deps: any[]) {
-  useMemo(() => { fn(); }, deps); // eslint-disable-line react-hooks/exhaustive-deps
+interface PackageModalProps {
+  open: boolean;
+  onClose: () => void;
+  member: Member | null;
+  memberPackages: MemberPackage[];
+  onSubmit: (memberId: string, template: { name: string; times: number; price: number }, note?: string) => void;
+}
+
+function BuyPackageModal({ open, onClose, member, onSubmit }: PackageModalProps) {
+  const [selectedIdx, setSelectedIdx] = useState(0);
+  const [note, setNote] = useState('');
+  const [err, setErr] = useState('');
+
+  useMemoEffect(() => {
+    if (open) { setSelectedIdx(0); setNote(''); setErr(''); }
+  }, [open]);
+
+  function submit() {
+    setErr('');
+    if (!member) return;
+    const tpl = PACKAGE_TEMPLATES[selectedIdx];
+    if (member.balance < tpl.price) {
+      setErr(`余额不足（当前 ¥${member.balance.toFixed(2)}），请先充值再购买套餐`);
+      return;
+    }
+    onSubmit(member.id, { name: tpl.name, times: tpl.times, price: tpl.price }, note.trim() || undefined);
+    onClose();
+  }
+
+  if (!member) return null;
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`为「${member.name}」购买次卡套餐`}
+      size="lg"
+      footer={
+        <>
+          <button onClick={onClose} className="btn-secondary">取消</button>
+          <button onClick={submit} className="btn-accent">
+            <Ticket size={14} className="mr-1.5" /> 确认购买
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {err && <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">{err}</div>}
+        <div className="p-4 rounded-xl bg-gradient-to-br from-purple-50 to-ball-50 border border-purple-100 flex items-center justify-between">
+          <div>
+            <div className="font-display font-bold text-purple-900">{member.name}</div>
+            <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-1">
+              <Phone size={11} /> {member.phone}
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-xs text-gray-500">可用余额</div>
+            <div className="font-display font-bold text-2xl text-purple-700">¥{member.balance.toFixed(2)}</div>
+          </div>
+        </div>
+        <div>
+          <label className="label-base">选择套餐</label>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {PACKAGE_TEMPLATES.map((tpl, idx) => {
+              const selected = selectedIdx === idx;
+              const canAfford = member.balance >= tpl.price;
+              return (
+                <button
+                  key={tpl.name}
+                  onClick={() => canAfford && setSelectedIdx(idx)}
+                  className={`p-4 rounded-xl border-2 text-left transition relative ${
+                    selected
+                      ? 'border-purple-500 bg-purple-50 ring-2 ring-purple-200 ring-offset-2'
+                      : canAfford
+                        ? 'border-gray-200 hover:border-purple-300 bg-white'
+                        : 'border-gray-100 bg-gray-50 opacity-60 cursor-not-allowed'
+                  }`}
+                >
+                  {idx === 0 && (
+                    <span className="absolute -top-2 -right-2 tag bg-ball-400 text-ball-900 border border-ball-500 text-[10px]">
+                      <Sparkles size={10} className="inline mr-0.5" /> 热门
+                    </span>
+                  )}
+                  <div className="text-sm font-bold text-purple-900">{tpl.name}</div>
+                  <div className="font-display font-bold text-2xl text-purple-700 mt-2">¥{tpl.price}</div>
+                  <div className="text-xs text-gray-500 mt-1">约 ¥{tpl.perPrice}/次</div>
+                  {!canAfford && <div className="text-[10px] text-red-500 mt-1">余额不足</div>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div>
+          <label className="label-base">购买备注</label>
+          <input
+            value={note} onChange={(e) => setNote(e.target.value)}
+            placeholder="如：活动购买、赠送等（可选）" className="input-base"
+          />
+        </div>
+        <div className="p-3 rounded-lg bg-gray-50 border border-gray-100 text-xs text-gray-600">
+          <div className="flex justify-between">
+            <span>套餐价格</span>
+            <span className="font-semibold">¥{PACKAGE_TEMPLATES[selectedIdx].price.toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between mt-1">
+            <span>包含次数</span>
+            <span className="font-semibold">{PACKAGE_TEMPLATES[selectedIdx].times} 次</span>
+          </div>
+          <div className="flex justify-between mt-1 pt-2 border-t border-gray-200">
+            <span>扣余额后</span>
+            <span className="font-semibold text-purple-700">
+              ¥{(member.balance - PACKAGE_TEMPLATES[selectedIdx].price).toFixed(2)}
+            </span>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function txTypeLabel(type: string) {
+  switch (type) {
+    case 'recharge': return { label: '余额充值', color: 'text-green-600', bg: 'bg-green-50 border-green-100', dir: 'in' };
+    case 'consume': return { label: '余额消费', color: 'text-red-600', bg: 'bg-red-50 border-red-100', dir: 'out' };
+    case 'refund': return { label: '退款退回', color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-100', dir: 'in' };
+    case 'package_buy': return { label: '购买次卡', color: 'text-purple-600', bg: 'bg-purple-50 border-purple-100', dir: 'out' };
+    case 'package_use': return { label: '次卡核销', color: 'text-amber-700', bg: 'bg-amber-50 border-amber-100', dir: 'out' };
+    case 'package_refund': return { label: '次卡退回', color: 'text-teal-600', bg: 'bg-teal-50 border-teal-100', dir: 'in' };
+    default: return { label: type, color: 'text-gray-600', bg: 'bg-gray-50 border-gray-100', dir: 'out' };
+  }
 }
 
 export default function Members() {
@@ -217,17 +349,21 @@ export default function Members() {
   const addMember = useAppStore((s) => s.addMember);
   const updateMember = useAppStore((s) => s.updateMember);
   const rechargeMember = useAppStore((s) => s.rechargeMember);
+  const buyPackage = useAppStore((s) => s.buyPackage);
   const listMemberBookings = useAppStore((s) => s.listMemberBookings);
   const listMemberTxs = useAppStore((s) => s.listMemberTxs);
+  const listMemberPackages = useAppStore((s) => s.listMemberPackages);
+  const getMemberTotalPackageRemaining = useAppStore((s) => s.getMemberTotalPackageRemaining);
   const bookings = useAppStore((s) => s.bookings);
   const bills = useAppStore((s) => s.bills);
   const courts = useAppStore((s) => s.courts);
 
   const [keyword, setKeyword] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'bookings' | 'wallet'>('bookings');
+  const [activeTab, setActiveTab] = useState<'bookings' | 'wallet' | 'packages'>('bookings');
   const [formModal, setFormModal] = useState<{ open: boolean; editing: Member | null }>({ open: false, editing: null });
   const [rechargeModal, setRechargeModal] = useState<{ open: boolean; member: Member | null }>({ open: false, member: null });
+  const [packageModal, setPackageModal] = useState<{ open: boolean; member: Member | null }>({ open: false, member: null });
   const [toast, setToast] = useState<string>('');
 
   const list = useMemo(() => {
@@ -260,6 +396,12 @@ export default function Members() {
     showToast(`充值成功 ¥${amount.toFixed(2)}`);
   }
 
+  function handleBuyPackage(memberId: string, tpl: { name: string; times: number; price: number }, note?: string) {
+    const res = buyPackage(memberId, tpl, note);
+    if (!res.ok) { showToast('购买失败：' + (res.error ?? '')); return; }
+    showToast(`购买 ${tpl.name} 成功！`);
+  }
+
   function getBillForBooking(bookingId: string) {
     return bills.find((b) => b.bookingId === bookingId);
   }
@@ -274,7 +416,7 @@ export default function Members() {
 
       <PageHeader
         title="会员管理"
-        subtitle="建立会员档案、充值储值余额、查询历史预约和消费流水"
+        subtitle="建立会员档案、充值储值余额、购买次卡套餐、查询历史预约"
         icon={<Users size={22} />}
         action={
           <div className="flex flex-wrap items-center gap-2">
@@ -303,6 +445,8 @@ export default function Members() {
             const meta = getLevelMeta(m.level);
             const mBookings = listMemberBookings(m.id);
             const mTxs = listMemberTxs(m.id);
+            const mPackages = listMemberPackages(m.id);
+            const pkgRemaining = getMemberTotalPackageRemaining(m.id);
             const isOpen = expanded === m.id;
             return (
               <div key={m.id} className="card overflow-hidden animate-fade-in-up">
@@ -325,10 +469,17 @@ export default function Members() {
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => setRechargeModal({ open: true, member: m })}
-                        title="充值"
+                        title="余额充值"
                         className="w-8 h-8 rounded-lg bg-green-50 text-green-700 hover:bg-green-100 transition flex items-center justify-center"
                       >
                         <Wallet size={15} />
+                      </button>
+                      <button
+                        onClick={() => setPackageModal({ open: true, member: m })}
+                        title="购买次卡"
+                        className="w-8 h-8 rounded-lg bg-purple-50 text-purple-700 hover:bg-purple-100 transition flex items-center justify-center"
+                      >
+                        <Ticket size={15} />
                       </button>
                       <button
                         onClick={() => setFormModal({ open: true, editing: m })}
@@ -340,18 +491,22 @@ export default function Members() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2 mb-3">
-                    <div className="p-2.5 rounded-lg bg-gradient-to-br from-ball-50 to-white border border-ball-100 text-center">
-                      <div className="text-[10px] text-gray-500">账户余额</div>
-                      <div className="font-display font-bold text-tennis-800">¥{m.balance.toFixed(2)}</div>
+                  <div className="grid grid-cols-4 gap-2 mb-3">
+                    <div className="p-2 rounded-lg bg-gradient-to-br from-ball-50 to-white border border-ball-100 text-center">
+                      <div className="text-[10px] text-gray-500">余额</div>
+                      <div className="font-display font-bold text-tennis-800 text-sm">¥{m.balance.toFixed(0)}</div>
                     </div>
-                    <div className="p-2.5 rounded-lg bg-gradient-to-br from-green-50 to-white border border-green-100 text-center">
-                      <div className="text-[10px] text-gray-500">累计充值</div>
-                      <div className="font-display font-bold text-green-700">¥{m.totalRecharge.toFixed(2)}</div>
+                    <div className="p-2 rounded-lg bg-gradient-to-br from-purple-50 to-white border border-purple-100 text-center">
+                      <div className="text-[10px] text-gray-500">次卡</div>
+                      <div className="font-display font-bold text-purple-700 text-sm">{pkgRemaining}次</div>
                     </div>
-                    <div className="p-2.5 rounded-lg bg-gradient-to-br from-red-50 to-white border border-red-100 text-center">
-                      <div className="text-[10px] text-gray-500">累计消费</div>
-                      <div className="font-display font-bold text-red-600">¥{m.totalConsume.toFixed(2)}</div>
+                    <div className="p-2 rounded-lg bg-gradient-to-br from-green-50 to-white border border-green-100 text-center">
+                      <div className="text-[10px] text-gray-500">累计充</div>
+                      <div className="font-display font-bold text-green-700 text-sm">¥{(m.totalRecharge + m.totalPackageBuy * 0).toFixed(0)}</div>
+                    </div>
+                    <div className="p-2 rounded-lg bg-gradient-to-br from-red-50 to-white border border-red-100 text-center">
+                      <div className="text-[10px] text-gray-500">累计消</div>
+                      <div className="font-display font-bold text-red-600 text-sm">¥{m.totalConsume.toFixed(0)}</div>
                     </div>
                   </div>
 
@@ -366,12 +521,15 @@ export default function Members() {
                   onClick={() => setExpanded(isOpen ? null : m.id)}
                   className="px-5 py-2.5 border-t border-gray-100 bg-tennis-50/40 hover:bg-tennis-50 transition cursor-pointer flex items-center justify-between text-xs text-gray-600"
                 >
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-3">
                     <span className="flex items-center gap-1">
-                      <Calendar size={12} /> 历史预约 {mBookings.length} 条
+                      <Calendar size={12} /> 预约 {mBookings.length}
                     </span>
                     <span className="flex items-center gap-1">
-                      <Receipt size={12} /> 资金流水 {mTxs.length} 条
+                      <Receipt size={12} /> 流水 {mTxs.length}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Package size={12} /> 套餐 {mPackages.length}
                     </span>
                   </div>
                   {isOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -394,7 +552,15 @@ export default function Members() {
                           activeTab === 'wallet' ? 'bg-white text-tennis-800 shadow-sm' : 'text-gray-500'
                         }`}
                       >
-                        <Wallet size={12} className="inline mr-1" /> 储值流水
+                        <Wallet size={12} className="inline mr-1" /> 资金流水
+                      </button>
+                      <button
+                        onClick={() => setActiveTab('packages')}
+                        className={`flex-1 py-1.5 rounded-md text-xs font-semibold transition ${
+                          activeTab === 'packages' ? 'bg-white text-tennis-800 shadow-sm' : 'text-gray-500'
+                        }`}
+                      >
+                        <Ticket size={12} className="inline mr-1" /> 次卡套餐
                       </button>
                     </div>
 
@@ -406,6 +572,11 @@ export default function Members() {
                         {mBookings.map((b) => {
                           const court = courts.find((c) => c.id === b.courtId);
                           const bill = getBillForBooking(b.id);
+                          const payLabel = b.payMethod === 'wallet' ? '余额扣款'
+                            : b.payMethod === 'cash' ? '现金'
+                            : b.payMethod === 'card' ? '刷卡'
+                            : b.payMethod === 'package' ? '次卡核销'
+                            : '待收款';
                           return (
                             <div key={b.id} className="p-3 rounded-lg border border-gray-100 bg-gray-50/50 text-sm">
                               <div className="flex items-center justify-between mb-1">
@@ -432,8 +603,7 @@ export default function Members() {
                               </div>
                               {bill && (
                                 <div className="text-[10px] text-gray-400 mt-1">
-                                  账单：{bill.billNo} · {bill.paymentStatus === 'paid' ? '已收款' : bill.paymentStatus === 'refunded' ? '已退款' : '待收款'}
-                                  {bill.paymentMethod && ` · ${bill.paymentMethod === 'wallet' ? '余额扣款' : bill.paymentMethod === 'cash' ? '现金' : '刷卡'}`}
+                                  账单：{bill.billNo} · {payLabel}
                                 </div>
                               )}
                             </div>
@@ -445,33 +615,79 @@ export default function Members() {
                     {activeTab === 'wallet' && (
                       <div className="space-y-2 max-h-72 overflow-y-auto scrollbar-thin pr-1">
                         {mTxs.length === 0 && (
-                          <div className="text-center text-gray-400 text-xs py-6">暂无资金流水，充值后会显示</div>
+                          <div className="text-center text-gray-400 text-xs py-6">暂无资金流水</div>
                         )}
                         {mTxs.map((t) => {
-                          const isRecharge = t.type === 'recharge';
-                          const isRefund = t.type === 'refund';
-                          const Icon = isRecharge ? ArrowDownCircle : isRefund ? RotateCcw : ArrowUpCircle;
-                          const color = isRecharge || isRefund ? 'text-green-600' : 'text-red-600';
-                          const bg = isRecharge || isRefund ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100';
+                          const meta = txTypeLabel(t.type);
+                          const Icon = meta.dir === 'in' ? ArrowDownCircle : ArrowUpCircle;
                           return (
-                            <div key={t.id} className={`p-3 rounded-lg border ${bg} text-sm`}>
+                            <div key={t.id} className={`p-3 rounded-lg border ${meta.bg} ${meta.color} text-sm`}>
                               <div className="flex items-center justify-between mb-1">
                                 <div className="flex items-center gap-2">
-                                  <Icon size={14} className={color} />
-                                  <span className={`font-semibold ${color}`}>
-                                    {isRecharge ? '充值' : isRefund ? '退款退回' : '消费扣款'}
-                                  </span>
+                                  <Icon size={14} />
+                                  <span className="font-semibold">{meta.label}</span>
                                 </div>
-                                <span className={`font-bold ${color}`}>
-                                  {isRecharge || isRefund ? '+' : '-'}¥{t.amount.toFixed(2)}
+                                <span className="font-bold">
+                                  {meta.dir === 'in' ? '+' : '-'}¥{t.amount.toFixed(2)}
                                 </span>
                               </div>
                               <div className="flex items-center justify-between text-[11px] text-gray-500">
                                 <span>余额：¥{t.balanceAfter.toFixed(2)}</span>
+                                {t.packageBalanceAfter !== undefined && (
+                                  <span>次卡：{t.packageBalanceAfter} 次</span>
+                                )}
                                 <span>{new Date(t.createdAt).toLocaleString('zh-CN')}</span>
                               </div>
                               {t.note && (
                                 <div className="text-[11px] text-gray-400 mt-0.5">备注：{t.note}</div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {activeTab === 'packages' && (
+                      <div className="space-y-2 max-h-72 overflow-y-auto scrollbar-thin pr-1">
+                        {mPackages.length === 0 && (
+                          <div className="text-center text-gray-400 text-xs py-6">
+                            暂无次卡套餐
+                            <button
+                              onClick={() => setPackageModal({ open: true, member: m })}
+                              className="block mx-auto mt-2 text-purple-600 font-semibold hover:underline"
+                            >
+                              立即购买 →
+                            </button>
+                          </div>
+                        )}
+                        {mPackages.map((p) => {
+                          const pct = (p.usedCount / p.totalCount) * 100;
+                          return (
+                            <div key={p.id} className="p-3 rounded-lg border border-purple-100 bg-purple-50/30 text-sm">
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                  <Ticket size={14} className="text-purple-600" />
+                                  <span className="font-semibold text-purple-900">{p.packageName}</span>
+                                </div>
+                                <span className="font-bold text-purple-700">
+                                  {p.remainingCount} / {p.totalCount} 次
+                                </span>
+                              </div>
+                              <div className="h-2 bg-purple-100 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-gradient-to-r from-purple-400 to-purple-600 rounded-full transition-all"
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                              <div className="flex justify-between text-[10px] text-gray-500 mt-1.5">
+                                <span>已用 {p.usedCount} 次</span>
+                                <span>剩余 {p.remainingCount} 次</span>
+                              </div>
+                              <div className="text-[10px] text-gray-400 mt-1">
+                                购买时间：{new Date(p.createdAt).toLocaleDateString('zh-CN')} · 购入价 ¥{p.price.toFixed(2)}
+                              </div>
+                              {p.note && (
+                                <div className="text-[10px] text-gray-400 mt-0.5">备注：{p.note}</div>
                               )}
                             </div>
                           );
@@ -497,6 +713,13 @@ export default function Members() {
         onClose={() => setRechargeModal({ open: false, member: null })}
         member={rechargeModal.member}
         onSubmit={handleRecharge}
+      />
+      <BuyPackageModal
+        open={packageModal.open}
+        onClose={() => setPackageModal({ open: false, member: null })}
+        member={packageModal.member}
+        memberPackages={packageModal.member ? listMemberPackages(packageModal.member.id) : []}
+        onSubmit={handleBuyPackage}
       />
     </div>
   );

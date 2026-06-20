@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, UserPlus, X, Users, User, CheckCircle2, Link2,
-  Search, Wallet, CreditCard, Clock, Phone, Star, ChevronDown, ChevronUp,
+  Search, Wallet, CreditCard, Clock, Phone, Star, ChevronDown, ChevronUp, Ticket,
 } from 'lucide-react';
 import Modal from './Modal';
 import { useAppStore, getLevelMeta } from '@/store';
@@ -30,6 +30,7 @@ export default function BookingModal({ open, onClose, court, date, initialStart,
   const checkRateGap = useAppStore((s) => s.checkRateGap);
   const calcBilling = useAppStore((s) => s.calcBilling);
   const createBooking = useAppStore((s) => s.createBooking);
+  const getMemberTotalPackageRemaining = useAppStore((s) => s.getMemberTotalPackageRemaining);
 
   const [courtId, setCourtId] = useState(court.id);
   const [startTime, setStartTime] = useState(initialStart ?? '18:00');
@@ -42,7 +43,7 @@ export default function BookingModal({ open, onClose, court, date, initialStart,
   const [bookingType, setBookingType] = useState<BookingType>('singles');
   const [teammates, setTeammates] = useState<string[]>([]);
   const [teammateInput, setTeammateInput] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'pending' | PaymentMethod>('pending');
+  const [paymentMethod, setPaymentMethod] = useState<'pending' | PaymentMethod | 'package'>('pending');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -112,6 +113,16 @@ export default function BookingModal({ open, onClose, court, date, initialStart,
     return selectedMember.balance < billing.totalAmount;
   }, [selectedMember, paymentMethod, billing]);
 
+  const packageRemaining = useMemo(() => {
+    if (!selectedMember) return 0;
+    return getMemberTotalPackageRemaining(selectedMember.id);
+  }, [selectedMember, getMemberTotalPackageRemaining]);
+
+  const packageInsufficient = useMemo(() => {
+    if (!selectedMember || paymentMethod !== 'package') return false;
+    return packageRemaining < 1;
+  }, [selectedMember, paymentMethod, packageRemaining]);
+
   const customerName = customerType === 'member' ? selectedMember?.name ?? '' : walkinName;
 
   function addTeammate() {
@@ -169,6 +180,10 @@ export default function BookingModal({ open, onClose, court, date, initialStart,
       setError(`会员余额不足（当前 ¥${selectedMember!.balance.toFixed(2)}），请先充值或更换支付方式`);
       return;
     }
+    if (paymentMethod === 'package' && packageInsufficient) {
+      setError(`会员次卡次数不足（当前剩余 ${packageRemaining} 次），请先购买次卡或更换支付方式`);
+      return;
+    }
 
     const res = createBooking({
       courtId,
@@ -180,7 +195,7 @@ export default function BookingModal({ open, onClose, court, date, initialStart,
       memberId: customerType === 'member' ? selectedMember!.id : undefined,
       bookingType,
       teammates,
-      paymentMethod: paymentMethod === 'pending' ? undefined : paymentMethod,
+      payMethod: paymentMethod,
     });
     if (!res.ok) {
       setError(res.error ?? '预约失败');
@@ -190,16 +205,19 @@ export default function BookingModal({ open, onClose, court, date, initialStart,
       ? '账单已生成（默认待收款）'
       : paymentMethod === 'wallet'
         ? `已从会员余额扣款 ¥${billing!.totalAmount.toFixed(2)}`
-        : paymentMethod === 'cash'
-          ? '已标记现金收款'
-          : '已标记刷卡收款';
+        : paymentMethod === 'package'
+          ? `已从次卡核销 1 次（等值 ¥${billing!.totalAmount.toFixed(2)}）`
+          : paymentMethod === 'cash'
+            ? '已标记现金收款'
+            : '已标记刷卡收款';
     setSuccess(`预约成功！时段已锁定。${payHint}。`);
     setTimeout(() => {
       onClose();
     }, 1600);
   }
 
-  const canSubmit = !conflict?.hasConflict && !rangeGap?.hasGap && !!billing && billing.totalAmount > 0 && !walletInsufficient
+  const canSubmit = !conflict?.hasConflict && !rangeGap?.hasGap && !!billing && billing.totalAmount > 0
+    && !walletInsufficient && !packageInsufficient
     && (customerType === 'walkin' ? !!walkinName.trim() : !!selectedMember);
 
   return (
@@ -513,7 +531,7 @@ export default function BookingModal({ open, onClose, court, date, initialStart,
 
         <div>
           <label className="label-base">支付方式</label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-4 gap-2">
             <button
               onClick={() => setPaymentMethod('pending')}
               className={`px-2 py-2.5 rounded-lg border-2 flex flex-col items-center gap-1 text-xs font-semibold transition ${
@@ -552,6 +570,24 @@ export default function BookingModal({ open, onClose, court, date, initialStart,
             >
               <Wallet size={16} /> 储值扣款
             </button>
+            <button
+              onClick={() => {
+                if (customerType !== 'member') {
+                  setError('次卡核销仅会员可用，请切换为会员类型或先选择会员');
+                  setCustomerType('member');
+                  return;
+                }
+                setPaymentMethod('package');
+                setError('');
+              }}
+              className={`px-2 py-2.5 rounded-lg border-2 flex flex-col items-center gap-1 text-xs font-semibold transition ${
+                paymentMethod === 'package'
+                  ? 'border-purple-500 bg-purple-50 text-purple-800'
+                  : 'border-gray-200 text-gray-600 hover:border-gray-300'
+              } ${customerType !== 'member' ? 'opacity-60' : ''}`}
+            >
+              <Ticket size={16} /> 次卡核销
+            </button>
           </div>
 
           {paymentMethod === 'pending' && (
@@ -582,6 +618,33 @@ export default function BookingModal({ open, onClose, court, date, initialStart,
                   {walletInsufficient
                     ? `还差 ¥${(billing.totalAmount - selectedMember.balance).toFixed(2)}`
                     : `¥${balanceAfterWallet!.toFixed(2)}`}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {paymentMethod === 'package' && selectedMember && (
+            <div className={`mt-2 text-xs rounded-lg p-3 border ${
+              packageInsufficient
+                ? 'bg-red-50 border-red-200 text-red-700'
+                : 'bg-purple-50 border-purple-200 text-purple-800'
+            }`}>
+              <div className="flex items-center justify-between mb-1">
+                <span>次卡剩余</span>
+                <span className="font-bold">{packageRemaining} 次</span>
+              </div>
+              <div className="flex items-center justify-between mb-1">
+                <span>本次核销</span>
+                <span className="font-bold">-1 次</span>
+              </div>
+              <div className={`flex items-center justify-between pt-1.5 mt-1.5 border-t border-dashed ${
+                packageInsufficient ? 'border-red-300' : 'border-purple-300'
+              }`}>
+                <span className="font-semibold">{packageInsufficient ? '⚠️ 次卡不足' : '核销后剩余'}</span>
+                <span className={`font-display font-bold text-lg ${packageInsufficient ? 'text-red-600' : 'text-green-700'}`}>
+                  {packageInsufficient
+                    ? '请先购买次卡套餐'
+                    : `${packageRemaining - 1} 次`}
                 </span>
               </div>
             </div>

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type {
   Bill, Booking, Court, DashboardRange, DashboardSummary,
-  Member, MemberLevel, PaymentMethod, PaymentStatus, Rate,
+  Member, MemberLevel, MemberPackage, PaymentMethod, PaymentStatus, Rate,
   RefundReason, RefundRecord, WalletTransaction,
 } from '@/types';
 import { loadData, saveData, genId, genBillNo } from '@/utils/storage';
@@ -27,7 +27,16 @@ function normalizeBooking(b: any): Booking {
   return {
     ...b,
     customerType: b.customerType ?? 'walkin',
+    payMethod: b.payMethod ?? (b.status === 'cancelled' ? 'pending' : 'pending'),
   } as Booking;
+}
+
+function normalizeMember(m: any): Member {
+  return {
+    ...m,
+    totalPackageBuy: m.totalPackageBuy ?? 0,
+    totalPackageUse: m.totalPackageUse ?? 0,
+  } as Member;
 }
 
 const LEVEL_META: Record<MemberLevel, { label: string; color: string; bg: string }> = {
@@ -48,21 +57,46 @@ export function getLevelMeta(level: MemberLevel) {
   return LEVEL_META[level] ?? LEVEL_META.normal;
 }
 
+export const PACKAGE_TEMPLATES = [
+  { name: '10次卡', times: 10, price: 600, perPrice: 60 },
+  { name: '20次卡', times: 20, price: 1000, perPrice: 50 },
+  { name: '50次卡', times: 50, price: 2000, perPrice: 40 },
+  { name: '100次年卡', times: 100, price: 3600, perPrice: 36 },
+];
+
 const DEFAULT_MEMBERS: Member[] = [
   {
     id: 'm1', name: '张三', phone: '13800138001', level: 'gold',
     balance: 520, totalRecharge: 1000, totalConsume: 480,
+    totalPackageBuy: 0, totalPackageUse: 0,
     note: '每周三固定打球', createdAt: new Date().toISOString(),
   },
   {
     id: 'm2', name: '李四', phone: '13900139002', level: 'silver',
     balance: 180, totalRecharge: 500, totalConsume: 320,
+    totalPackageBuy: 10, totalPackageUse: 3,
     createdAt: new Date().toISOString(),
   },
   {
     id: 'm3', name: '王五', phone: '13700137003', level: 'platinum',
     balance: 2680, totalRecharge: 5000, totalConsume: 2320,
+    totalPackageBuy: 20, totalPackageUse: 8,
     note: '双打队长，经常带人', createdAt: new Date().toISOString(),
+  },
+];
+
+const DEFAULT_PACKAGES: MemberPackage[] = [
+  {
+    id: 'p1', memberId: 'm2', packageName: '10次卡',
+    totalCount: 10, usedCount: 3, remainingCount: 7,
+    price: 600, perTimes: 1,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'p2', memberId: 'm3', packageName: '20次卡',
+    totalCount: 20, usedCount: 8, remainingCount: 12,
+    price: 1000, perTimes: 1,
+    createdAt: new Date().toISOString(),
   },
 ];
 
@@ -88,19 +122,19 @@ function makeDefaultBookings(members: Member[]): Booking[] {
       id: 'b1', courtId: 'c1', date: today, startTime: '08:00', endTime: '09:30',
       customerName: mZhang?.name ?? '张三', customerType: 'member', memberId: mZhang?.id,
       bookingType: 'singles', teammates: [],
-      totalAmount: 75, status: 'active', createdAt: new Date().toISOString(),
+      totalAmount: 75, payMethod: 'wallet', status: 'active', createdAt: new Date().toISOString(),
     },
     {
       id: 'b2', courtId: 'c1', date: today, startTime: '18:00', endTime: '20:00',
       customerName: mLi?.name ?? '李四', customerType: 'member', memberId: mLi?.id,
       bookingType: 'doubles', teammates: ['王五', '赵六', '孙七'],
-      totalAmount: 240, status: 'active', createdAt: new Date().toISOString(),
+      totalAmount: 240, payMethod: 'pending', status: 'active', createdAt: new Date().toISOString(),
     },
     {
       id: 'b3', courtId: 'c2', date: tomorrow, startTime: '14:00', endTime: '16:00',
       customerName: '周八散客', customerType: 'walkin',
       bookingType: 'singles', teammates: [],
-      totalAmount: 160, status: 'active', createdAt: new Date().toISOString(),
+      totalAmount: 160, payMethod: 'cash', status: 'active', createdAt: new Date().toISOString(),
     },
   ];
 }
@@ -112,6 +146,9 @@ function makeDefaultBills(bookings: Booking[], rates: Rate[], members: Member[])
       ? splitDoublesShare(billing.totalAmount, b.customerName, b.teammates)
       : undefined;
     const member = b.memberId ? members.find((m) => m.id === b.memberId) : undefined;
+    const payMethod = b.payMethod === 'pending' || b.payMethod === 'package'
+      ? undefined
+      : b.payMethod as PaymentMethod;
     return {
       id: genId('bl_'),
       bookingId: b.id,
@@ -119,14 +156,66 @@ function makeDefaultBills(bookings: Booking[], rates: Rate[], members: Member[])
       totalAmount: billing.totalAmount,
       segments: billing.segments,
       shares,
-      paymentStatus: 'pending' as PaymentStatus,
+      paymentStatus: payMethod ? 'paid' : 'pending',
+      paymentMethod: payMethod,
       refunds: [],
       refundAmount: 0,
       memberId: member?.id,
       memberSnapshot: member ? { id: member.id, name: member.name, phone: member.phone, level: member.level } : undefined,
+      paidAt: payMethod ? new Date().toISOString() : undefined,
       createdAt: b.createdAt,
     };
   });
+}
+
+function makeDefaultWalletTxs(members: Member[], bookings: Booking[]): WalletTransaction[] {
+  const txs: WalletTransaction[] = [];
+  const m1 = members.find((m) => m.id === 'm1');
+  const m2 = members.find((m) => m.id === 'm2');
+  const m3 = members.find((m) => m.id === 'm3');
+  const b1 = bookings.find((b) => b.id === 'b1');
+  const now = new Date().toISOString();
+
+  if (m1) {
+    txs.push({
+      id: genId('wt_'), memberId: m1.id, type: 'recharge',
+      amount: 1000, balanceAfter: 1000,
+      note: '初始充值', createdAt: now,
+    });
+    if (b1) {
+      txs.push({
+        id: genId('wt_'), memberId: m1.id, type: 'consume',
+        amount: 75, balanceAfter: 520,
+        bookingId: b1.id, createdAt: now,
+      });
+    }
+  }
+  if (m2) {
+    txs.push({
+      id: genId('wt_'), memberId: m2.id, type: 'recharge',
+      amount: 500, balanceAfter: 500,
+      note: '初始充值', createdAt: now,
+    });
+    txs.push({
+      id: genId('wt_'), memberId: m2.id, type: 'package_buy',
+      amount: 600, balanceAfter: 180, packageBalanceAfter: 7,
+      note: '购买10次卡', createdAt: now,
+    });
+  }
+  if (m3) {
+    txs.push({
+      id: genId('wt_'), memberId: m3.id, type: 'recharge',
+      amount: 5000, balanceAfter: 5000,
+      note: '初始充值', createdAt: now,
+    });
+    txs.push({
+      id: genId('wt_'), memberId: m3.id, type: 'package_buy',
+      amount: 1000, balanceAfter: 2680, packageBalanceAfter: 12,
+      note: '购买20次卡', createdAt: now,
+    });
+  }
+
+  return txs.sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''));
 }
 
 function getDateRange(base: string, range: DashboardRange): string[] {
@@ -148,6 +237,7 @@ interface AppState {
   bookings: Booking[];
   bills: Bill[];
   members: Member[];
+  memberPackages: MemberPackage[];
   walletTxs: WalletTransaction[];
   inited: boolean;
 
@@ -160,9 +250,13 @@ interface AppState {
   updateRate: (id: string, patch: Partial<Rate>) => void;
   removeRate: (id: string) => void;
 
-  addMember: (m: Omit<Member, 'id' | 'createdAt' | 'balance' | 'totalRecharge' | 'totalConsume'>) => void;
+  addMember: (m: Omit<Member, 'id' | 'createdAt' | 'balance' | 'totalRecharge' | 'totalConsume' | 'totalPackageBuy' | 'totalPackageUse'>) => void;
   updateMember: (id: string, patch: Partial<Member>) => void;
   rechargeMember: (id: string, amount: number, note?: string) => { ok: boolean; error?: string };
+
+  buyPackage: (memberId: string, template: { name: string; times: number; price: number }, note?: string) => { ok: boolean; error?: string; pkg?: MemberPackage };
+  listMemberPackages: (memberId: string) => MemberPackage[];
+  getMemberTotalPackageRemaining: (memberId: string) => number;
 
   createBooking: (data: {
     courtId: string;
@@ -174,12 +268,13 @@ interface AppState {
     memberId?: string;
     bookingType: 'singles' | 'doubles';
     teammates: string[];
-    paymentMethod?: PaymentMethod;
+    payMethod: PaymentMethod | 'pending' | 'package';
+    packageId?: string;
   }) => { ok: boolean; error?: string; booking?: Booking };
 
   cancelBooking: (id: string, reason?: RefundReason, note?: string) => { ok: boolean; error?: string };
 
-  settleBill: (billId: string, method: PaymentMethod) => { ok: boolean; error?: string };
+  settleBill: (billId: string, method: PaymentMethod | 'package') => { ok: boolean; error?: string };
   markBillPaid: (billId: string) => void;
 
   checkConflict: (
@@ -200,6 +295,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   bookings: [],
   bills: [],
   members: [],
+  memberPackages: [],
   walletTxs: [],
   inited: false,
 
@@ -209,8 +305,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     const rates = loadData<Rate[]>('rates', []);
     const rawBookings = loadData<any[]>('bookings', []);
     const rawBills = loadData<any[]>('bills', []);
-    const members = loadData<Member[]>('members', []);
+    const rawMembers = loadData<any[]>('members', []);
+    const memberPackages = loadData<MemberPackage[]>('memberPackages', []);
     const walletTxs = loadData<WalletTransaction[]>('walletTxs', []);
+
+    const members = rawMembers.map(normalizeMember);
     const bookings = rawBookings.map(normalizeBooking);
     const bills = rawBills.map(normalizeBill);
 
@@ -218,19 +317,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       saveData('courts', DEFAULT_COURTS);
       saveData('rates', DEFAULT_RATES);
       saveData('members', DEFAULT_MEMBERS);
+      saveData('memberPackages', DEFAULT_PACKAGES);
       const dBookings = makeDefaultBookings(DEFAULT_MEMBERS);
       saveData('bookings', dBookings);
       const dBills = makeDefaultBills(dBookings, DEFAULT_RATES, DEFAULT_MEMBERS);
       saveData('bills', dBills);
-      saveData('walletTxs', []);
+      const dTxs = makeDefaultWalletTxs(DEFAULT_MEMBERS, dBookings);
+      saveData('walletTxs', dTxs);
       set({
-        courts: DEFAULT_COURTS, rates: DEFAULT_RATES, members: DEFAULT_MEMBERS,
-        bookings: dBookings, bills: dBills, walletTxs: [], inited: true,
+        courts: DEFAULT_COURTS, rates: DEFAULT_RATES,
+        members: DEFAULT_MEMBERS, memberPackages: DEFAULT_PACKAGES,
+        bookings: dBookings, bills: dBills, walletTxs: dTxs, inited: true,
       });
     } else {
       saveData('bookings', bookings);
       saveData('bills', bills);
-      set({ courts, rates, bookings, bills, members, walletTxs, inited: true });
+      saveData('members', members);
+      set({ courts, rates, bookings, bills, members, memberPackages, walletTxs, inited: true });
     }
   },
 
@@ -269,6 +372,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       balance: 0,
       totalRecharge: 0,
       totalConsume: 0,
+      totalPackageBuy: 0,
+      totalPackageUse: 0,
       createdAt: new Date().toISOString(),
     };
     const next = [...get().members, member];
@@ -303,6 +408,68 @@ export const useAppStore = create<AppState>((set, get) => ({
     return { ok: true };
   },
 
+  buyPackage(memberId, template, note) {
+    if (template.price <= 0 || template.times <= 0) return { ok: false, error: '套餐参数异常' };
+    const member = get().members.find((m) => m.id === memberId);
+    if (!member) return { ok: false, error: '会员不存在' };
+
+    const now = new Date().toISOString();
+    const pkg: MemberPackage = {
+      id: genId('pkg_'),
+      memberId,
+      packageName: template.name,
+      totalCount: template.times,
+      usedCount: 0,
+      remainingCount: template.times,
+      price: template.price,
+      perTimes: 1,
+      note,
+      createdAt: now,
+    };
+
+    const newBalance = Number((member.balance - template.price).toFixed(2));
+    const newTotalBuy = member.totalPackageBuy + template.times;
+    const newTotalPackageBuyAmount = Number((member.totalRecharge + 0).toFixed(2));
+
+    const nextPackages = [...get().memberPackages, pkg];
+    const nextMembers = get().members.map((m) =>
+      m.id === memberId ? {
+        ...m,
+        balance: newBalance,
+        totalPackageBuy: newTotalBuy,
+        totalRecharge: newTotalPackageBuyAmount,
+      } : m
+    );
+
+    const pkgRemain = get().getMemberTotalPackageRemaining(memberId) + template.times;
+    const tx: WalletTransaction = {
+      id: genId('wt_'), memberId, type: 'package_buy',
+      amount: template.price, balanceAfter: newBalance,
+      packageBalanceAfter: pkgRemain,
+      packageId: pkg.id, note: note ?? `购买${template.name}`,
+      createdAt: now,
+    };
+    const nextTxs = [...get().walletTxs, tx];
+
+    saveData('memberPackages', nextPackages);
+    saveData('members', nextMembers);
+    saveData('walletTxs', nextTxs);
+    set({ memberPackages: nextPackages, members: nextMembers, walletTxs: nextTxs });
+    return { ok: true, pkg };
+  },
+
+  listMemberPackages(memberId) {
+    return get().memberPackages
+      .filter((p) => p.memberId === memberId)
+      .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+  },
+
+  getMemberTotalPackageRemaining(memberId) {
+    return get().memberPackages
+      .filter((p) => p.memberId === memberId)
+      .reduce((s, p) => s + p.remainingCount, 0);
+  },
+
   checkConflict(courtId, date, startTime, endTime, excludeBookingId) {
     return checkBookingConflict(get().bookings, courtId, date, startTime, endTime, excludeBookingId);
   },
@@ -320,7 +487,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   createBooking(data) {
-    const { courtId, date, startTime, endTime, customerName, customerType, memberId, bookingType, teammates, paymentMethod } = data;
+    const { courtId, date, startTime, endTime, customerName, customerType, memberId, bookingType, teammates, payMethod, packageId } = data;
     const conflict = get().checkConflict(courtId, date, startTime, endTime);
     if (conflict.hasConflict) {
       const names = conflict.conflictingBookings.map((b) => `${b.customerName}(${b.startTime}-${b.endTime})`).join('、');
@@ -337,6 +504,28 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (customerType === 'member' && !member) return { ok: false, error: '未找到对应会员' };
 
     const now = new Date().toISOString();
+    let usePackageId: string | undefined;
+    let packageUsedCount = 0;
+
+    if (payMethod === 'package') {
+      if (!member) return { ok: false, error: '次卡核销需选择会员' };
+      const totalRemaining = get().getMemberTotalPackageRemaining(member.id);
+      if (totalRemaining < 1) return { ok: false, error: '会员次卡余额不足，请先购买次卡套餐' };
+      if (packageId) {
+        const pkg = get().memberPackages.find((p) => p.id === packageId && p.memberId === member.id);
+        if (!pkg || pkg.remainingCount < 1) return { ok: false, error: '所选次卡余额不足' };
+        usePackageId = pkg.id;
+        packageUsedCount = 1;
+      } else {
+        const firstPkg = get().memberPackages
+          .filter((p) => p.memberId === member.id && p.remainingCount > 0)
+          .sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''))[0];
+        if (!firstPkg) return { ok: false, error: '没有可用的次卡' };
+        usePackageId = firstPkg.id;
+        packageUsedCount = 1;
+      }
+    }
+
     const booking: Booking = {
       id: genId('b_'),
       courtId, date, startTime, endTime,
@@ -345,6 +534,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       memberId: member?.id,
       bookingType, teammates,
       totalAmount: billing.totalAmount,
+      payMethod,
+      packageId: usePackageId,
+      packageUsedCount: payMethod === 'package' ? packageUsedCount : undefined,
       status: 'active',
       createdAt: now,
     };
@@ -356,14 +548,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       ? splitDoublesShare(billing.totalAmount, booking.customerName, teammates)
       : undefined;
 
-    let payMethod: PaymentMethod | undefined;
+    let payMethodForBill: PaymentMethod | undefined;
     let payStatus: PaymentStatus = 'pending';
     let paidAt: string | undefined;
     let nextMembers = get().members;
+    let nextPackages = get().memberPackages;
     let nextTxs = get().walletTxs;
 
-    if (paymentMethod) {
-      if (paymentMethod === 'wallet') {
+    if (payMethod !== 'pending') {
+      if (payMethod === 'wallet') {
         if (!member) return { ok: false, error: '余额扣款需选择会员' };
         if (member.balance < billing.totalAmount) {
           return { ok: false, error: `会员余额不足（当前 ¥${member.balance.toFixed(2)}），请先充值或更换支付方式` };
@@ -377,10 +570,35 @@ export const useAppStore = create<AppState>((set, get) => ({
           bookingId: booking.id, createdAt: now,
         };
         nextTxs = [...nextTxs, tx];
+        payMethodForBill = 'wallet';
+        payStatus = 'paid';
+        paidAt = now;
+      } else if (payMethod === 'cash' || payMethod === 'card') {
+        payMethodForBill = payMethod;
+        payStatus = 'paid';
+        paidAt = now;
+      } else if (payMethod === 'package') {
+        if (!member || !usePackageId) return { ok: false, error: '次卡核销异常' };
+        nextPackages = nextPackages.map((p) =>
+          p.id === usePackageId
+            ? { ...p, usedCount: p.usedCount + packageUsedCount, remainingCount: p.remainingCount - packageUsedCount }
+            : p
+        );
+        const newUseCount = member.totalPackageUse + packageUsedCount;
+        nextMembers = nextMembers.map((m) => m.id === member!.id ? { ...m, totalPackageUse: newUseCount } : m);
+        const remainAfter = get().getMemberTotalPackageRemaining(member.id);
+        const tx: WalletTransaction = {
+          id: genId('wt_'), memberId: member.id, type: 'package_use',
+          amount: 0, balanceAfter: member.balance,
+          packageBalanceAfter: remainAfter - packageUsedCount,
+          bookingId: booking.id, packageId: usePackageId,
+          note: `次卡核销（${billing.totalAmount.toFixed(2)}元等额）`,
+          createdAt: now,
+        };
+        nextTxs = [...nextTxs, tx];
+        payStatus = 'paid';
+        paidAt = now;
       }
-      payMethod = paymentMethod;
-      payStatus = 'paid';
-      paidAt = now;
     }
 
     const bill: Bill = {
@@ -391,7 +609,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       segments: billing.segments,
       shares,
       paymentStatus: payStatus,
-      paymentMethod: payMethod,
+      paymentMethod: payMethodForBill,
       memberId: member?.id,
       memberSnapshot: member ? { id: member.id, name: member.name, phone: member.phone, level: member.level } : undefined,
       paidAt,
@@ -402,11 +620,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const nextBills = [...get().bills, bill];
     saveData('bills', nextBills);
     saveData('members', nextMembers);
+    saveData('memberPackages', nextPackages);
     saveData('walletTxs', nextTxs);
 
     set({
       bookings: nextBookings, bills: nextBills,
-      members: nextMembers, walletTxs: nextTxs,
+      members: nextMembers, memberPackages: nextPackages, walletTxs: nextTxs,
     });
     return { ok: true, booking };
   },
@@ -424,17 +643,34 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     let nextBills = get().bills;
     let nextMembers = get().members;
+    let nextPackages = get().memberPackages;
     let nextTxs = get().walletTxs;
 
     nextBills = nextBills.map((b) => {
       if (b.bookingId !== id) return b;
-      const refundMethod: PaymentMethod = b.paymentMethod === 'wallet' ? 'wallet' : 'cash';
+
+      // 只有已支付（paymentStatus=paid）的订单才产生退款记录
+      if (b.paymentStatus !== 'paid') {
+        // 待收款取消：不退款、不产生资金记录，状态设为 refunded 仅用于标识订单已取消
+        return {
+          ...b,
+          paymentStatus: 'refunded' as PaymentStatus,
+          refunds: [],
+          refundAmount: 0,
+        };
+      }
+
+      let refundMethod: PaymentMethod | 'package';
+      if (booking.payMethod === 'package') refundMethod = 'package';
+      else refundMethod = b.paymentMethod === 'wallet' ? 'wallet' : 'cash';
+
       const refundAmount = b.totalAmount;
       const refund: RefundRecord = {
         id: genId('rf_'), billId: b.id, bookingId: id,
-        amount: refundAmount, reason, refundMethod, note, createdAt: now,
+        amount: refundAmount, reason, refundMethod: refundMethod as PaymentMethod, note, createdAt: now,
       };
       const newRefunds = [...(b.refunds ?? []), refund];
+
       if (refundMethod === 'wallet' && b.memberId) {
         const mIdx = nextMembers.findIndex((m) => m.id === b.memberId);
         if (mIdx >= 0) {
@@ -448,7 +684,31 @@ export const useAppStore = create<AppState>((set, get) => ({
           };
           nextTxs = [...nextTxs, tx];
         }
+      } else if (refundMethod === 'package' && booking.packageId && b.memberId) {
+        const pkgId = booking.packageId;
+        const used = booking.packageUsedCount ?? 1;
+        nextPackages = nextPackages.map((p) =>
+          p.id === pkgId
+            ? { ...p, usedCount: Math.max(0, p.usedCount - used), remainingCount: p.remainingCount + used }
+            : p
+        );
+        const member = nextMembers.find((m) => m.id === b.memberId);
+        if (member) {
+          const newUse = Math.max(0, member.totalPackageUse - used);
+          nextMembers = nextMembers.map((m) => m.id === b.memberId ? { ...m, totalPackageUse: newUse } : m);
+          const remainAfter = nextPackages.filter((p) => p.memberId === b.memberId).reduce((s, p) => s + p.remainingCount, 0);
+          const tx: WalletTransaction = {
+            id: genId('wt_'), memberId: b.memberId, type: 'package_refund',
+            amount: 0, balanceAfter: member.balance,
+            packageBalanceAfter: remainAfter,
+            billId: b.id, bookingId: id, packageId: pkgId,
+            note: `次卡退回${used}次`,
+            createdAt: now,
+          };
+          nextTxs = [...nextTxs, tx];
+        }
       }
+
       return {
         ...b,
         paymentStatus: 'refunded' as PaymentStatus,
@@ -459,8 +719,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     saveData('bills', nextBills);
     saveData('members', nextMembers);
+    saveData('memberPackages', nextPackages);
     saveData('walletTxs', nextTxs);
-    set({ bookings: nextBookings, bills: nextBills, members: nextMembers, walletTxs: nextTxs });
+    set({
+      bookings: nextBookings, bills: nextBills,
+      members: nextMembers, memberPackages: nextPackages, walletTxs: nextTxs,
+    });
     return { ok: true };
   },
 
@@ -471,7 +735,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const now = new Date().toISOString();
     let nextMembers = get().members;
+    let nextPackages = get().memberPackages;
     let nextTxs = get().walletTxs;
+    let payMethod: PaymentMethod | undefined;
 
     if (method === 'wallet') {
       if (!bill.memberId) return { ok: false, error: '余额扣款需关联会员' };
@@ -489,18 +755,48 @@ export const useAppStore = create<AppState>((set, get) => ({
         billId: bill.id, bookingId: bill.bookingId, createdAt: now,
       };
       nextTxs = [...nextTxs, tx];
+      payMethod = 'wallet';
+    } else if (method === 'package') {
+      if (!bill.memberId) return { ok: false, error: '次卡核销需关联会员' };
+      const totalRemain = get().getMemberTotalPackageRemaining(bill.memberId);
+      if (totalRemain < 1) return { ok: false, error: '次卡余额不足' };
+      const firstPkg = get().memberPackages
+        .filter((p) => p.memberId === bill.memberId && p.remainingCount > 0)
+        .sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''))[0];
+      if (!firstPkg) return { ok: false, error: '没有可用的次卡' };
+      nextPackages = nextPackages.map((p) =>
+        p.id === firstPkg.id ? { ...p, usedCount: p.usedCount + 1, remainingCount: p.remainingCount - 1 } : p
+      );
+      const m = nextMembers.find((x) => x.id === bill.memberId);
+      if (m) {
+        const newUse = m.totalPackageUse + 1;
+        nextMembers = nextMembers.map((x) => x.id === bill.memberId ? { ...x, totalPackageUse: newUse } : x);
+        const remainAfter = totalRemain - 1;
+        const tx: WalletTransaction = {
+          id: genId('wt_'), memberId: bill.memberId, type: 'package_use',
+          amount: 0, balanceAfter: m.balance,
+          packageBalanceAfter: remainAfter,
+          billId: bill.id, bookingId: bill.bookingId, packageId: firstPkg.id,
+          note: `次卡核销（${bill.totalAmount.toFixed(2)}元等额）`,
+          createdAt: now,
+        };
+        nextTxs = [...nextTxs, tx];
+      }
+    } else {
+      payMethod = method as PaymentMethod;
     }
 
     const nextBills = get().bills.map((b) =>
       b.id === billId
-        ? { ...b, paymentStatus: 'paid' as PaymentStatus, paymentMethod: method, paidAt: now }
+        ? { ...b, paymentStatus: 'paid' as PaymentStatus, paymentMethod: payMethod, paidAt: now }
         : b
     );
 
     saveData('bills', nextBills);
     saveData('members', nextMembers);
+    saveData('memberPackages', nextPackages);
     saveData('walletTxs', nextTxs);
-    set({ bills: nextBills, members: nextMembers, walletTxs: nextTxs });
+    set({ bills: nextBills, members: nextMembers, memberPackages: nextPackages, walletTxs: nextTxs });
     return { ok: true };
   },
 
@@ -513,7 +809,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const setDates = new Set(dates);
     const from = dates[0];
     const to = dates[dates.length - 1];
-    const { courts, bookings, bills } = get();
+    const { courts, bookings, bills, members, walletTxs } = get();
 
     const perCourt = courts.filter((c) => c.active).map((court) => {
       let bookedMinutes = 0;
@@ -530,11 +826,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (b.status === 'active') {
           bookedMinutes += mins;
           bookingCount += 1;
-          if (bill && bill.paymentStatus !== 'refunded') revenue += bill.totalAmount;
+          // 只有已到账（paid）才算收入
+          if (bill && bill.paymentStatus === 'paid') revenue += bill.totalAmount;
         } else if (b.status === 'cancelled') {
           cancelledMinutes += mins;
           cancelCount += 1;
-          if (bill) refunded += bill.refundAmount ?? 0;
+          // 只有已支付后退款的才算退款金额
+          if (bill && bill.refundAmount && bill.paymentMethod) refunded += bill.refundAmount;
         }
       }
 
@@ -556,20 +854,102 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
     });
 
+    // 收入按已到账统计
     const totalRevenue = perCourt.reduce((s, c) => s + c.revenue, 0);
     const totalRefund = perCourt.reduce((s, c) => s + c.refunded, 0);
     const totalBookings = perCourt.reduce((s, c) => s + c.bookingCount, 0);
     const totalCancels = perCourt.reduce((s, c) => s + c.cancelCount, 0);
     const avgUtil = perCourt.length ? perCourt.reduce((s, c) => s + c.utilization, 0) / perCourt.length : 0;
 
+    // 会员/散客收入拆分（按已到账）
+    let memberRevenue = 0;
+    let walkinRevenue = 0;
+    let memberBookingCount = 0;
+    let walkinBookingCount = 0;
+    let pendingAmount = 0;
+    let paidAmount = 0;
+
+    const rangeBookingsAll = bookings.filter((b) => setDates.has(b.date) && b.status === 'active');
+    for (const b of rangeBookingsAll) {
+      const bill = bills.find((x) => x.bookingId === b.id);
+      if (!bill) continue;
+      if (bill.paymentStatus === 'paid') {
+        paidAmount += bill.totalAmount;
+        if (b.customerType === 'member') memberRevenue += bill.totalAmount;
+        else walkinRevenue += bill.totalAmount;
+      } else if (bill.paymentStatus === 'pending') {
+        pendingAmount += bill.totalAmount;
+      }
+      if (b.customerType === 'member') memberBookingCount += 1;
+      else walkinBookingCount += 1;
+    }
+
+    // 充值收入（储值收款，按时间筛选账单创建日期）
+    let rechargeRevenue = 0;
+    for (const tx of walletTxs) {
+      const txDate = tx.createdAt?.slice(0, 10);
+      if (!txDate) continue;
+      if (!setDates.has(txDate)) continue;
+      if (tx.type === 'recharge') rechargeRevenue += tx.amount;
+    }
+
+    // 会员消费排行（按时间范围内预约金额）
+    const memberMap = new Map<string, { count: number; spend: number; recharge: number }>();
+    for (const b of rangeBookingsAll) {
+      if (!b.memberId) continue;
+      const bill = bills.find((x) => x.bookingId === b.id);
+      const amount = bill?.paymentStatus === 'paid' ? bill.totalAmount : 0;
+      const cur = memberMap.get(b.memberId) ?? { count: 0, spend: 0, recharge: 0 };
+      cur.count += 1;
+      cur.spend += amount;
+      memberMap.set(b.memberId, cur);
+    }
+    // 加上充值金额
+    for (const tx of walletTxs) {
+      const txDate = tx.createdAt?.slice(0, 10);
+      if (!txDate || !setDates.has(txDate)) continue;
+      if (tx.type !== 'recharge') continue;
+      const cur = memberMap.get(tx.memberId) ?? { count: 0, spend: 0, recharge: 0 };
+      cur.recharge += tx.amount;
+      memberMap.set(tx.memberId, cur);
+    }
+
+    const memberRanking = Array.from(memberMap.entries())
+      .map(([memberId, v]) => {
+        const m = members.find((x) => x.id === memberId);
+        return {
+          memberId,
+          memberName: m?.name ?? '未知',
+          memberLevel: m?.level ?? 'normal',
+          bookingCount: v.count,
+          totalSpend: Number(v.spend.toFixed(2)),
+          totalRecharge: Number(v.recharge.toFixed(2)),
+        };
+      })
+      .sort((a, b) => b.totalSpend + b.totalRecharge - (a.totalSpend + a.totalRecharge));
+
+    // 复购会员数 = 有 2 次及以上预约的会员数
+    const uniqueMembers = memberMap.size;
+    const repeatMembers = Array.from(memberMap.values()).filter((v) => v.count >= 2).length;
+    const repeatMemberRate = uniqueMembers > 0 ? (repeatMembers / uniqueMembers) * 100 : 0;
+
     return {
       range, from, to,
       totalRevenue: Number(totalRevenue.toFixed(2)),
       totalRefund: Number(totalRefund.toFixed(2)),
       netRevenue: Number((totalRevenue - totalRefund).toFixed(2)),
+      memberRevenue: Number(memberRevenue.toFixed(2)),
+      walkinRevenue: Number(walkinRevenue.toFixed(2)),
+      rechargeRevenue: Number(rechargeRevenue.toFixed(2)),
+      pendingAmount: Number(pendingAmount.toFixed(2)),
+      paidAmount: Number(paidAmount.toFixed(2)),
       totalBookings, totalCancels,
+      memberBookingCount, walkinBookingCount,
+      uniqueMembers,
+      repeatMemberRate: Number(repeatMemberRate.toFixed(2)),
       avgUtilization: Number(avgUtil.toFixed(2)),
       courts: perCourt.sort((a, b) => b.revenue - a.revenue),
+      memberRanking,
     };
   },
 
